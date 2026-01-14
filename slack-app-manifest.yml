@@ -1,0 +1,43 @@
+# Slack App Manifest for Leads Agent
+# https://api.slack.com/reference/manifests
+#
+# Usage:
+#   1. Go to https://api.slack.com/apps
+#   2. Click "Create New App" → "From an app manifest"
+#   3. Select your workspace
+#   4. Paste this YAML (or switch to JSON)
+#   5. Replace YOUR_DOMAIN with your actual server URL
+#   6. Review and create
+#
+# After creating:
+#   - Copy Bot Token from "OAuth & Permissions" → SLACK_BOT_TOKEN
+#   - Copy Signing Secret from "Basic Information" → SLACK_SIGNING_SECRET
+
+display_information:
+  name: Leads Classifier
+  description: AI-powered lead classification bot
+  background_color: "#1a1a2e"
+
+features:
+  bot_user:
+    display_name: Leads Classifier
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history    # Read messages in public channels
+      - channels:read       # View basic channel info
+      - chat:write          # Send messages as the bot
+
+settings:
+  event_subscriptions:
+    # ⚠️  IMPORTANT: Replace with your actual server URL
+    # For local dev, use ngrok: ngrok http 8000
+    request_url: https://YOUR_DOMAIN/slack/events
+    bot_events:
+      - message.channels    # Listen for messages in public channels
+
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
