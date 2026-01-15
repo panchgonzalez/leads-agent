@@ -160,6 +160,65 @@ def backtest(
     run_backtest(limit=limit)
 
 
+@app.command("pull-history")
+def pull_history(
+    output: Path = typer.Option(
+        Path("channel_history.json"),
+        "--output",
+        "-o",
+        help="Output JSON file path",
+    ),
+    limit: int = typer.Option(50, "--limit", "-n", help="Number of messages to fetch"),
+    channel_id: str = typer.Option(None, "--channel", "-c", help="Channel ID (defaults to SLACK_CHANNEL_ID)"),
+    print_only: bool = typer.Option(False, "--print", "-p", help="Print to console instead of saving to file"),
+):
+    """Fetch Slack channel history and save to JSON."""
+    import json
+
+    from slack_sdk.errors import SlackApiError
+
+    from leads_agent.slack import slack_client
+
+    settings = get_settings()
+    client = slack_client(settings)
+
+    target_channel = channel_id or settings.slack_channel_id
+    if not target_channel:
+        rprint("[red]Error:[/] No channel ID provided. Use --channel or set SLACK_CHANNEL_ID")
+        raise typer.Exit(1)
+
+    rprint(Panel.fit("📥 [bold blue]Fetching Channel History[/]", border_style="blue"))
+    rprint(f"[dim]Channel: {target_channel} | Limit: {limit}[/]\n")
+
+    try:
+        resp = client.conversations_history(channel=target_channel, limit=limit)
+    except SlackApiError as e:
+        error_code = e.response.get("error", "unknown")
+        rprint(f"[red]Slack API error:[/] {error_code}")
+
+        # Provide helpful hints for common errors
+        hints = {
+            "not_in_channel": "The bot must be invited to the channel. Use /invite @bot-name in Slack.",
+            "channel_not_found": "Check that the channel ID is correct.",
+            "missing_scope": "The bot token needs 'channels:history' (public) or 'groups:history' (private) scope.",
+            "invalid_auth": "The SLACK_BOT_TOKEN is invalid or expired.",
+        }
+        if error_code in hints:
+            rprint(f"[yellow]Hint:[/] {hints[error_code]}")
+
+        raise typer.Exit(1)
+
+    messages = resp.get("messages", [])
+
+    if print_only:
+        for msg in messages:
+            rprint("=" * 60)
+            rprint(json.dumps(msg, indent=2))
+    else:
+        output.write_text(json.dumps(messages, indent=2))
+        rprint(f"[green]✓[/] Saved {len(messages)} messages to [bold]{output}[/]")
+
+
 @app.command()
 def classify(
     message: str = typer.Argument(..., help="Message text to classify"),
