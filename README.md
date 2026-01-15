@@ -1,6 +1,15 @@
-# Leads Agent
+<div align="center">
+<!-- omit in toc -->
+<picture>
+  <img width="220" alt="ABC" src="docs/assets/abc.jpg">
+</picture>
 
-AI-powered Slack bot that classifies inbound leads from HubSpot and researches promising ones.
+# HubSpot Leads Agent 🧠
+
+<strong>AI-powered Slack bot that classifies inbound leads from HubSpot and researches promising ones.</strong>
+<br>
+<br>
+</div align="center">
 
 When HubSpot posts a lead to your Slack channel, Leads Agent:
 1. Parses contact info (name, email, company)
