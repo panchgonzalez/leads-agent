@@ -57,6 +57,10 @@ def init(
         "  [cyan]SLACK_CHANNEL_ID[/]",
         default="C...",
     )
+    slack_test_channel_id = Prompt.ask(
+        "  [cyan]SLACK_TEST_CHANNEL_ID[/] [dim](optional, for testing)[/]",
+        default="",
+    )
 
     rprint("\n[bold]LLM Configuration[/]")
     rprint("[dim]Default uses OpenAI; set LLM_BASE_URL for Ollama/other providers[/]\n")
@@ -73,21 +77,31 @@ def init(
     rprint("\n[bold]Runtime Options[/]")
     dry_run = Confirm.ask("  [cyan]DRY_RUN[/] (don't post replies)?", default=True)
 
-    env_content = f"""\
-# Slack credentials
-SLACK_BOT_TOKEN={slack_bot_token}
-SLACK_SIGNING_SECRET={slack_signing_secret}
-SLACK_CHANNEL_ID={slack_channel_id}
+    # Build env content
+    env_lines = [
+        "# Slack credentials",
+        f"SLACK_BOT_TOKEN={slack_bot_token}",
+        f"SLACK_SIGNING_SECRET={slack_signing_secret}",
+        f"SLACK_CHANNEL_ID={slack_channel_id}",
+    ]
+    if slack_test_channel_id:
+        env_lines.append(f"SLACK_TEST_CHANNEL_ID={slack_test_channel_id}")
 
-# LLM configuration (OpenAI by default)
-OPENAI_API_KEY={openai_api_key}
-LLM_MODEL_NAME={llm_model_name}
-# Uncomment for Ollama or other OpenAI-compatible providers:
-# LLM_BASE_URL=http://localhost:11434/v1
+    env_lines.extend(
+        [
+            "",
+            "# LLM configuration (OpenAI by default)",
+            f"OPENAI_API_KEY={openai_api_key}",
+            f"LLM_MODEL_NAME={llm_model_name}",
+            "# Uncomment for Ollama or other OpenAI-compatible providers:",
+            "# LLM_BASE_URL=http://localhost:11434/v1",
+            "",
+            "# Runtime",
+            f"DRY_RUN={str(dry_run).lower()}",
+        ]
+    )
 
-# Runtime
-DRY_RUN={str(dry_run).lower()}
-"""
+    env_content = "\n".join(env_lines) + "\n"
 
     output.write_text(env_content)
     rprint(f"\n[green]✓[/] Configuration written to [bold]{output}[/]")
@@ -110,6 +124,7 @@ def config():
     table.add_row("SLACK_BOT_TOKEN", _mask(settings.slack_bot_token))
     table.add_row("SLACK_SIGNING_SECRET", _mask(settings.slack_signing_secret))
     table.add_row("SLACK_CHANNEL_ID", settings.slack_channel_id or "[not set]")
+    table.add_row("SLACK_TEST_CHANNEL_ID", settings.slack_test_channel_id or "[not set]")
     table.add_row("OPENAI_API_KEY", _mask(settings.openai_api_key))
     table.add_row("LLM_BASE_URL", settings.llm_base_url)
     table.add_row("LLM_MODEL_NAME", settings.llm_model_name)
@@ -169,6 +184,69 @@ def backtest(
     title = f"🔬 [bold magenta]Backtesting Lead Classifier[/]{mode_str}"
     rprint(Panel.fit(title, border_style="magenta"))
     run_backtest(limit=limit, enrich=enrich, max_searches=max_searches, debug=debug, verbose=verbose)
+
+
+@app.command()
+def test(
+    limit: int = typer.Option(5, "--limit", "-n", help="Number of leads to process"),
+    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
+    max_searches: int = typer.Option(4, "--max-searches", help="Max web searches per lead"),
+    test_channel: str = typer.Option(None, "--channel", "-c", help="Test channel ID"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Don't actually post to Slack"),
+):
+    """
+    Test mode: process historical leads and post results to a test channel.
+
+    Pulls HubSpot leads from SLACK_CHANNEL_ID, processes them,
+    and posts results to SLACK_TEST_CHANNEL_ID (not as threads).
+    """
+    from leads_agent.backtest import fetch_hubspot_leads
+    from leads_agent.processor import process_and_post
+
+    settings = get_settings()
+
+    # Override dry_run if flag is set
+    if dry_run:
+        settings.dry_run = True
+
+    # Determine test channel
+    target_channel = test_channel or settings.slack_test_channel_id
+    if not target_channel:
+        rprint("[red]Error:[/] No test channel configured.")
+        rprint("[dim]Set SLACK_TEST_CHANNEL_ID in .env or use --channel[/]")
+        raise typer.Exit(1)
+
+    rprint(Panel.fit("🧪 [bold cyan]Test Mode[/]", border_style="cyan"))
+    rprint(f"[dim]Source: {settings.slack_channel_id} → Target: {target_channel}[/]")
+    rprint(f"[dim]Limit: {limit} | Enrich: {enrich} | Dry run: {settings.dry_run}[/]\n")
+
+    count = 0
+    for msg, lead in fetch_hubspot_leads(settings, limit=limit):
+        count += 1
+        rprint(f"[cyan][{count}][/] Processing: {lead.first_name} {lead.last_name} <{lead.email}>")
+
+        result = process_and_post(
+            settings,
+            lead,
+            channel_id=target_channel,
+            thread_ts=None,  # Post to main channel, not as thread
+            enrich=enrich,
+            max_searches=max_searches,
+            include_lead_info=True,  # Include lead details in test posts
+        )
+
+        label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}.get(result.label, "⚪")
+        rprint(f"    {label_emoji} {result.label.upper()} ({result.classification.confidence:.0%})")
+
+        if settings.dry_run:
+            rprint("    [dim](dry run - not posted)[/]")
+        else:
+            rprint(f"    [green]Posted to {target_channel}[/]")
+
+    if count == 0:
+        rprint("[yellow]No HubSpot leads found in channel history.[/]")
+    else:
+        rprint(f"\n[green]Processed {count} leads.[/]")
 
 
 @app.command("pull-history")

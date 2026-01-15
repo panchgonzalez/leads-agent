@@ -1,97 +1,68 @@
-# 🧠 Leads Agent
+# Leads Agent
 
-AI-powered Slack bot that automatically classifies inbound leads from HubSpot.
+AI-powered Slack bot that classifies inbound leads from HubSpot and researches promising ones.
 
-When HubSpot posts a new lead to your Slack channel, Leads Agent parses the contact info, classifies it, and posts a threaded reply with the result.
+When HubSpot posts a lead to your Slack channel, Leads Agent:
+1. Parses contact info (name, email, company)
+2. Classifies the lead using an LLM
+3. **Optionally researches** promising leads via web search
+4. Posts a threaded reply with results
 
-**Classification Labels:**
-- 🟢 **promising** — Genuine inquiry about services or collaboration
-- 🟡 **solicitation** — Vendors, sales pitches, recruiters, partnerships
-- 🔴 **spam** — Irrelevant, automated, SEO/link-building, crypto, junk
+## Classification Labels
 
-**Extracted Fields:**
-- First name, last name, email
-- Company (extracted from message or email domain)
-- Classification with confidence score and reason
+| Label | Description |
+|-------|-------------|
+| 🟢 **promising** | Genuine inquiry about services or collaboration |
+| 🟡 **solicitation** | Vendors, sales pitches, recruiters, partnerships |
+| 🔴 **spam** | Irrelevant, automated, SEO/link-building, junk |
+
+## Features
+
+- **HubSpot-specific parsing** — Extracts first name, last name, email, company from HubSpot message format
+- **Smart classification** — Infers company from email domain when not provided
+- **Web search enrichment** — Researches promising leads (company info, contact role) using DuckDuckGo
+- **Threaded replies** — Keeps channels clean by replying in threads
+- **Backtesting** — Test classifier on historical leads before going live
 
 ---
 
 ## Quick Start
 
 ```bash
-# Clone and enter the project
 git clone https://github.com/yourusername/leads-agent.git
 cd leads-agent
 
-# Create virtual environment and install dependencies
-uv venv
-source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
+uv venv && source .venv/bin/activate
 uv pip install -e .
 
-# Run the setup wizard
-leads-agent init
-
-# Start the server
-leads-agent run
-```
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Python 3.11+**
-- **[uv](https://docs.astral.sh/uv/)** — Fast Python package manager
-- **[OpenAI API key](https://platform.openai.xcom/api-keys)** — For LLM inference (or use Ollama locally)
-
-### Install with uv
-
-```bash
-# Install uv if you haven't already
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create and activate virtual environment
-uv venv
-source .venv/bin/activate
-
-# Install the package in editable mode
-uv pip install -e .
-
-# Verify installation
-leads-agent --help
+leads-agent init   # Interactive setup
+leads-agent run    # Start server
 ```
 
 ---
 
 ## Configuration
 
-### Option A: Interactive Setup (Recommended)
+### Interactive Setup (Recommended)
 
 ```bash
 leads-agent init
 ```
 
-This wizard will prompt you for all required values and create a `.env` file.
-
-### Option B: Manual Setup
+### Environment Variables
 
 ```bash
-cp .env.example .env
-# Edit .env with your credentials
-```
-
-### Option C: Environment Variables
-
-Export directly in your shell or CI/CD:
-
-```bash
+# Slack
 export SLACK_BOT_TOKEN="xoxb-..."
 export SLACK_SIGNING_SECRET="..."
 export SLACK_CHANNEL_ID="C..."
+
+# LLM (OpenAI by default)
 export OPENAI_API_KEY="sk-..."
-export LLM_MODEL_NAME="gpt-4o-mini"
-export DRY_RUN="true"
+export LLM_MODEL_NAME="gpt-4o-mini"  # optional
+
+# Behavior
+export DRY_RUN="true"  # Set to "false" to post replies
 ```
 
 ### Verify Configuration
@@ -104,144 +75,68 @@ leads-agent config
 
 ## Slack App Setup
 
-### Option A: Using the Manifest (Recommended)
-
-The fastest way to set up the Slack App:
+### Using the Manifest (Recommended)
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps)
 2. Click **Create New App** → **From an app manifest**
-3. Select your workspace
-4. Paste the contents of [`slack-app-manifest.yml`](slack-app-manifest.yml)
-5. **Replace `YOUR_DOMAIN`** with your actual server URL (e.g., `https://example.com` or your ngrok URL)
-6. Click **Create**
-7. Go to **Install App** and click **Install to Workspace**
+3. Paste [`slack-app-manifest.yml`](slack-app-manifest.yml)
+4. Replace `YOUR_DOMAIN` with your server URL
+5. Install to workspace
 
-Then grab your credentials:
+**Get credentials:**
 
 | Credential | Location |
 |------------|----------|
-| `SLACK_BOT_TOKEN` | **OAuth & Permissions** → Bot User OAuth Token (starts with `xoxb-`) |
-| `SLACK_SIGNING_SECRET` | **Basic Information** → App Credentials → Signing Secret |
-| `SLACK_CHANNEL_ID` | In Slack: right-click the channel → **View channel details** → copy the ID |
+| `SLACK_BOT_TOKEN` | OAuth & Permissions → Bot User OAuth Token |
+| `SLACK_SIGNING_SECRET` | Basic Information → Signing Secret |
+| `SLACK_CHANNEL_ID` | Right-click channel → View details → Copy ID |
 
-Skip to [Invite the Bot](#step-6-invite-the-bot).
-
----
-
-### Option B: Manual Setup
-
-#### Step 1: Create a Slack App
-
-1. Go to [api.slack.com/apps](https://api.slack.com/apps)
-2. Click **Create New App** → **From scratch**
-3. Name it (e.g., "Leads Classifier") and select your workspace
-
-#### Step 2: Configure Bot Permissions
-
-1. Navigate to **OAuth & Permissions** in the sidebar
-2. Under **Scopes → Bot Token Scopes**, add:
-   - `channels:history` — Read messages in public channels the bot is invited to
-   - `channels:read` — View basic public channel info
-   - `groups:history` — Read messages in private channels the bot is invited to
-   - `groups:read` — View basic private channel info
-   - `chat:write` — Send messages as the bot
-3. Click **Install to Workspace** and authorize
-
-#### Step 3: Get Your Credentials
-
-| Credential | Location |
-|------------|----------|
-| `SLACK_BOT_TOKEN` | **OAuth & Permissions** → Bot User OAuth Token (starts with `xoxb-`) |
-| `SLACK_SIGNING_SECRET` | **Basic Information** → App Credentials → Signing Secret |
-| `SLACK_CHANNEL_ID` | In Slack: right-click the channel → **View channel details** → copy the ID at the bottom |
-
-#### Step 4: Enable Event Subscriptions
-
-1. Navigate to **Event Subscriptions** in the sidebar
-2. Toggle **Enable Events** to ON
-3. Set **Request URL** to your server's public endpoint:
-   ```
-   https://your-domain.com/slack/events
-   ```
-   > 💡 For local development use
-   >  - [ngrok](https://ngrok.com/): `ngrok http 8000`
-   >  - [tailscale](https://tailscale.com/): `tailscale funnel 8000`
-4. Slack will send a verification challenge — your server must be running!
-
-#### Step 5: Subscribe to Bot Events
-
-Under **Subscribe to bot events**, click **Add Bot User Event** and add:
-
-- `message.channels` — Messages in public channels (bot must be invited)
-- `message.groups` — Messages in private channels (bot must be invited)
-
-Click **Save Changes**.
-
-#### Step 6: Invite the Bot
-
-**Important:** The bot only receives messages from channels it's been invited to. This works for both public and private channels.
-
-In Slack, invite the bot to your leads channel:
+**Invite the bot:**
 
 ```
 /invite @Leads Classifier
 ```
 
-> **Note:** For private channels, you must have the bot invited before it can receive any messages. The bot will not have access to message history from before it was invited.
+> The bot only receives messages from channels it's invited to.
 
 ---
 
-## Usage
-
-### CLI Commands
+## CLI Commands
 
 ```bash
-# Interactive setup wizard
-leads-agent init
+leads-agent init                    # Setup wizard
+leads-agent config                  # Show configuration
+leads-agent run [--reload]          # Start API server
 
-# Show current configuration
-leads-agent config
+# Classification
+leads-agent classify "message"      # Classify a single message
+leads-agent classify "msg" --enrich # Research promising leads
 
-# Start the API server
-leads-agent run [--host 0.0.0.0] [--port 8000] [--reload]
+# Backtesting
+leads-agent backtest --limit 20                    # Test on historical leads
+leads-agent backtest --enrich                      # Include web research
+leads-agent backtest --debug                       # Show agent steps
+leads-agent backtest --enrich --debug --verbose    # Full trace
 
-# Backtest against historical HubSpot leads
-leads-agent backtest [--limit 50]
-
-# Fetch channel history to JSON (for debugging)
-leads-agent pull-history [--limit 50] [--output history.json]
-
-# Classify a single message (for testing)
-leads-agent classify "First Name: John
-Last Name: Smith
-Email: john@acme.com
-Message: We need help with AWS migration"
+# Debugging
+leads-agent pull-history --limit 10 --print        # View raw Slack messages
 ```
 
-### Running the Server
+### Enrichment Options
 
-```bash
-# Development (with auto-reload)
-leads-agent run --reload
+When `--enrich` is enabled, promising leads are researched via web search:
 
-# Production
-leads-agent run --host 0.0.0.0 --port 8000
-```
+| Option | Description |
+|--------|-------------|
+| `--enrich`, `-e` | Enable web search for promising leads |
+| `--max-searches` | Limit searches per lead (default: 4) |
+| `--debug`, `-d` | Show agent steps and token usage |
+| `--verbose`, `-v` | Show full message history |
 
-The server exposes a single endpoint:
-
-- `POST /slack/events` — Receives Slack event payloads
-
-### Dry Run Mode
-
-By default, `DRY_RUN=true` — the bot logs classifications but doesn't post replies. 
-
-To enable posting:
-
-```bash
-export DRY_RUN=false
-leads-agent run
-```
+**What gets researched:**
+- Company website and description (via email domain search)
+- Industry and company size
+- Contact's role/title
 
 ---
 
@@ -250,112 +145,60 @@ leads-agent run
 ### OpenAI (Default)
 
 ```bash
-# Set your API key
 export OPENAI_API_KEY="sk-..."
-
-# Optionally change the model (default: gpt-4o-mini)
-export LLM_MODEL_NAME="gpt-4o"
+export LLM_MODEL_NAME="gpt-4o"  # optional, defaults to gpt-4o-mini
 ```
 
-### Local (Ollama)
+### Ollama (Local)
 
 ```bash
-# Install and run Ollama
 ollama serve
-
-# Pull a model
 ollama pull llama3.1:8b
 
-# Configure for Ollama
 export LLM_BASE_URL="http://localhost:11434/v1"
 export LLM_MODEL_NAME="llama3.1:8b"
-# No OPENAI_API_KEY needed for Ollama
 ```
 
 ### Other Providers
 
-Any OpenAI-compatible API works. Set `LLM_BASE_URL`, `LLM_MODEL_NAME`, and `OPENAI_API_KEY` accordingly.
+Any OpenAI-compatible API works — set `LLM_BASE_URL`, `LLM_MODEL_NAME`, and `OPENAI_API_KEY`.
 
 ---
 
-## Development
-
-```bash
-# Install with dev dependencies
-uv pip install -e ".[dev]"
-
-# Run with auto-reload
-leads-agent run --reload
-
-# Run backtest to verify classifier behavior
-leads-agent backtest --limit 20
-```
-
-### Project Structure
+## Project Structure
 
 ```
 leads-agent/
 ├── src/leads_agent/
-│   ├── __init__.py      # Package exports
-│   ├── __main__.py      # python -m leads_agent
-│   ├── api.py           # FastAPI app — filters HubSpot messages
-│   ├── backtest.py      # Historical HubSpot lead testing
-│   ├── cli.py           # Typer CLI
-│   ├── config.py        # Settings via pydantic-settings
-│   ├── models.py        # Data models (HubSpotLead, LeadClassification)
-│   ├── llm.py           # LLM agent for classification
-│   └── slack.py         # Slack client helpers
-├── docs/
-│   └── ARCHITECTURE.md  # Detailed architecture & integration guide
-├── main.py              # Convenience shim
-├── pyproject.toml       # Package configuration
-├── slack-app-manifest.yml  # Slack App manifest template
-├── .env.example         # Example environment file
-└── README.md
+│   ├── api.py        # FastAPI webhook handler
+│   ├── cli.py        # Typer CLI
+│   ├── config.py     # Settings (pydantic-settings)
+│   ├── models.py     # HubSpotLead, LeadClassification, research models
+│   ├── llm.py        # Classification + research agents
+│   ├── backtest.py   # Historical lead testing
+│   └── slack.py      # Slack client & signature verification
+├── docs/ARCHITECTURE.md
+├── slack-app-manifest.yml
+└── pyproject.toml
 ```
-
-### Documentation
-
-- **[Architecture Guide](docs/ARCHITECTURE.md)** — Deep dive into the system design, data flow (HubSpot → Slack → LLM), Slack manifest explained, and backtesting
 
 ---
 
 ## Troubleshooting
 
-### "Invalid request" on Slack events
-
-- Verify `SLACK_SIGNING_SECRET` is correct
-- Ensure your server clock is synchronized (Slack rejects requests >5 min old)
-
-### "channel_not_found" errors
-
-- Verify `SLACK_CHANNEL_ID` is correct (should start with `C`)
-- Ensure the bot is invited to the channel
-
-### No classifications happening
-
-- **Check that HubSpot is posting to the channel** — the bot only processes messages from HubSpot
-- Verify HubSpot messages have `username: "HubSpot"` (check with `leads-agent pull-history --print`)
-- Check that Event Subscriptions are enabled in your Slack App
-- Verify the bot is subscribed to `message.channels` and/or `message.groups`
-- **Ensure the bot is invited to the channel** — the bot only receives events from channels it's a member of
-- For private channels: confirm `groups:history` and `groups:read` scopes are added
-- Check server logs for incoming events
-
-### Backtest shows "No HubSpot leads found"
-
-- Run `leads-agent pull-history --print` to see raw messages
-- Verify HubSpot is the one posting (check `username` field)
-- Make sure HubSpot messages have attachments with lead data
-
-### LLM connection errors
-
-- Verify `OPENAI_API_KEY` is set and valid
-- For Ollama: ensure `ollama serve` is running and `LLM_BASE_URL` is set
-- Check that `LLM_MODEL_NAME` is a valid model for your provider
+| Issue | Solution |
+|-------|----------|
+| "Invalid request" on Slack events | Check `SLACK_SIGNING_SECRET`; ensure server clock is synced |
+| No classifications happening | Verify bot is invited to channel; check HubSpot is posting |
+| Backtest shows no leads | Run `pull-history --print` to verify HubSpot messages exist |
+| LLM errors | Check `OPENAI_API_KEY`; for Ollama ensure server is running |
 
 ---
 
+## Documentation
+
+- **[Architecture Guide](docs/ARCHITECTURE.md)** — Data flow, Slack manifest, classification system, deployment
+
 ## License
 
-MIT — See [LICENSE](LICENSE) for details.
+MIT — See [LICENSE](LICENSE)

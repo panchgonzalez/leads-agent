@@ -6,9 +6,9 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, Request
 
 from .config import Settings, get_settings
-from .llm import classify_lead
 from .models import HubSpotLead
-from .slack import slack_client, verify_slack_request
+from .processor import process_and_post
+from .slack import verify_slack_request
 
 
 def _is_hubspot_message(settings: Settings, event: dict[str, Any]) -> bool:
@@ -33,8 +33,7 @@ def _is_hubspot_message(settings: Settings, event: dict[str, Any]) -> bool:
 
 
 def _handle_hubspot_lead(settings: Settings, event: dict[str, Any]) -> None:
-    """Process a HubSpot lead message."""
-    # Parse the HubSpot message
+    """Process a HubSpot lead message (production mode)."""
     lead = HubSpotLead.from_slack_event(event)
     if not lead:
         print("[SKIP] Could not parse HubSpot message")
@@ -46,36 +45,19 @@ def _handle_hubspot_lead(settings: Settings, event: dict[str, Any]) -> None:
     print(f"  Company: {lead.company}")
     print(f"  Message: {lead.message[:100] if lead.message else 'N/A'}...")
 
-    # Classify the lead
-    result = classify_lead(settings, lead)
+    # Process and post as thread reply
+    result = process_and_post(
+        settings,
+        lead,
+        channel_id=event["channel"],
+        thread_ts=event["ts"],  # Reply in thread
+        enrich=False,  # Production mode doesn't enrich by default
+    )
 
     print("\n[CLASSIFICATION]")
-    print(f"  Label: {result.label.value}")
-    print(f"  Confidence: {result.confidence:.0%}")
-    print(f"  Reason: {result.reason}")
-
-    if settings.dry_run:
-        print("[DRY RUN] Would post to Slack")
-        return
-
-    # Build response message
-    label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}.get(result.label.value, "⚪")
-
-    response_parts = [
-        f"{label_emoji} *{result.label.value.upper()}* ({result.confidence:.0%})",
-        f"_{result.reason}_",
-    ]
-
-    # Add extracted info if available
-    if result.company and result.company != lead.company:
-        response_parts.append(f"\n📋 Company: {result.company}")
-
-    client = slack_client(settings)
-    client.chat_postMessage(
-        channel=event["channel"],
-        thread_ts=event["ts"],
-        text="\n".join(response_parts),
-    )
+    print(f"  Label: {result.label}")
+    print(f"  Confidence: {result.classification.confidence:.0%}")
+    print(f"  Reason: {result.classification.reason}")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

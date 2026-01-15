@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     slack_bot_token: SecretStr | None = Field(default=None, validation_alias="SLACK_BOT_TOKEN")
     slack_signing_secret: SecretStr | None = Field(default=None, validation_alias="SLACK_SIGNING_SECRET")
     slack_channel_id: str | None = Field(default=None, validation_alias="SLACK_CHANNEL_ID")
+    slack_test_channel_id: str | None = Field(default=None, validation_alias="SLACK_TEST_CHANNEL_ID")
 
     # LLM (OpenAI by default; works with any OpenAI-compatible API)
     llm_base_url: str = Field(default="https://api.openai.com/v1", validation_alias="LLM_BASE_URL")
