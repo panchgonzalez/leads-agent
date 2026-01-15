@@ -104,7 +104,7 @@ leads-agent config
 **Invite the bot:**
 
 ```
-/invite @Leads Classifier
+/invite @Leads Agent
 ```
 
 > The bot only receives messages from channels it's invited to.
