@@ -106,3 +106,34 @@ class LeadClassification(BaseModel):
     label: LeadLabel = Field(description="Classification label: spam, solicitation, or promising")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score 0.0-1.0")
     reason: str = Field(description="Brief explanation for the classification")
+
+
+class CompanyResearch(BaseModel):
+    """Research findings about a company."""
+
+    company_name: str = Field(description="Official company name")
+    company_description: str = Field(description="Brief description of what the company does")
+    industry: str | None = Field(default=None, description="Industry or sector")
+    company_size: str | None = Field(default=None, description="Company size if found (startup, SMB, enterprise)")
+    website: str | None = Field(default=None, description="Company website URL")
+    relevance_notes: str | None = Field(default=None, description="Notes on why this lead might be relevant")
+
+
+class ContactResearch(BaseModel):
+    """Research findings about a contact person."""
+
+    full_name: str = Field(description="Contact's full name")
+    title: str | None = Field(default=None, description="Job title or role")
+    linkedin_summary: str | None = Field(default=None, description="Brief summary from LinkedIn or similar")
+    relevance_notes: str | None = Field(default=None, description="Notes on the contact's relevance")
+
+
+class EnrichedLeadClassification(LeadClassification):
+    """Lead classification enriched with web research for promising leads."""
+
+    # Research results (only populated for promising leads)
+    company_research: CompanyResearch | None = Field(default=None, description="Research findings about the company")
+    contact_research: ContactResearch | None = Field(
+        default=None, description="Research findings about the contact person"
+    )
+    research_summary: str | None = Field(default=None, description="Executive summary of research findings")

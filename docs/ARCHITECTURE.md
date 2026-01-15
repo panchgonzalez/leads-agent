@@ -32,16 +32,22 @@ This document explains how Leads Agent works, the data flow from lead submission
 
 ## Overview
 
-Leads Agent is a webhook-based service that listens to a Slack channel, classifies incoming messages using an Agent, and posts classification results as threaded replies.
+Leads Agent is a webhook-based service that listens to a Slack channel for HubSpot lead notifications, parses the contact information, classifies the lead using an LLM, and posts the result as a threaded reply.
+
+**Key Features:**
+- **HubSpot-specific:** Only processes messages from the HubSpot bot (ignores other messages)
+- **Contact extraction:** Parses first name, last name, email, company from HubSpot's message format
+- **Smart classification:** Extracts company name from email domain if not provided
+- **Threaded replies:** Posts classification as a thread reply to keep channels clean
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   HubSpot   │────▶│    Slack    │────▶│ Leads Agent  │────▶│    Agent    │
-│  (or CRM)   │     │   Channel   │     │   (FastAPI)  │     │             │
-│             │     │             │◀────│              │     │             │
+│   HubSpot   │────▶│    Slack    │────▶│ Leads Agent  │────▶│   OpenAI    │
+│  Workflow   │     │   Channel   │     │   (FastAPI)  │     │    LLM      │
+│             │     │             │◀────│              │◀────│             │
 └─────────────┘     └─────────────┘     └──────────────┘     └─────────────┘
-     Form              Message            POST /slack/         Enrich
-   submission          posted              events              message
+     Form           Bot message         Filter HubSpot       Classify lead
+   submission       with lead data      Parse contact info   Extract company
 ```
 
 ---
@@ -51,13 +57,13 @@ Leads Agent is a webhook-based service that listens to a Slack channel, classifi
 ```
 leads-agent/
 ├── src/leads_agent/
-│   ├── api.py          # FastAPI app — receives Slack webhooks
-│   ├── slack.py        # Slack SDK client & request verification
+│   ├── api.py          # FastAPI app — filters HubSpot messages, dispatches to classifier
+│   ├── models.py       # Data models (HubSpotLead, LeadClassification)
 │   ├── llm.py          # pydantic-ai agent for classification
-│   ├── domain.py       # Data models (LeadLabel, LeadClassification)
+│   ├── slack.py        # Slack SDK client & request verification
 │   ├── config.py       # Environment-based settings (pydantic-settings)
-│   ├── backtest.py     # Historical message testing
-│   └── cli.py          # Typer CLI for setup/run/backtest
+│   ├── backtest.py     # Historical HubSpot lead testing
+│   └── cli.py          # Typer CLI for setup/run/backtest/classify
 └── slack-app-manifest.yml  # Slack App configuration template
 ```
 
@@ -65,11 +71,12 @@ leads-agent/
 
 | Component | Responsibility |
 |-----------|----------------|
-| **FastAPI (`api.py`)** | HTTP server that receives Slack event webhooks, verifies signatures, and dispatches to classifier |
+| **FastAPI (`api.py`)** | Receives Slack webhooks, filters for HubSpot messages only, parses leads, dispatches to classifier |
+| **Models (`models.py`)** | `HubSpotLead` for parsing Slack events; `LeadClassification` for LLM output with contact info |
+| **Classifier (`llm.py`)** | pydantic-ai Agent that classifies leads and extracts company name |
 | **Slack Client (`slack.py`)** | Wraps `slack_sdk` for posting messages; implements HMAC signature verification |
-| **Classifier (`llm.py`)** | pydantic-ai Agent that calls an OpenAI-compatible LLM and returns structured `LeadClassification` |
 | **Settings (`config.py`)** | Loads config from environment / `.env` using pydantic-settings |
-| **CLI (`cli.py`)** | Typer-based CLI for `init`, `config`, `run`, `backtest`, `classify` commands |
+| **CLI (`cli.py`)** | Typer-based CLI for `init`, `config`, `run`, `backtest`, `classify`, `pull-history` commands |
 
 ---
 
@@ -111,19 +118,23 @@ We have about 50 microservices and need someone with AWS/EKS experience.
 
 ### 2. Event Delivery (Slack → Leads Agent)
 
-When a message is posted to the channel, Slack sends an HTTP POST to your server.
+When HubSpot posts a message to the channel, Slack sends an HTTP POST to your server.
 
-**Slack Event Payload:**
+**HubSpot Bot Message (Slack Event):**
 
 ```json
 {
   "type": "event_callback",
   "event": {
     "type": "message",
+    "subtype": "bot_message",
+    "username": "HubSpot",
     "channel": "C0123456789",
-    "user": "U9876543210",
-    "text": "New lead from Jane Smith\nCompany: Acme Corp\n...",
-    "ts": "1704067200.000001"
+    "ts": "1704067200.000001",
+    "attachments": [{
+      "fallback": "*First Name*: Jane\n*Last Name*: Smith\n*Email*: jane@acme.com\n*Message*: Hi, we need help with...",
+      "text": "*First Name*: Jane\n*Last Name*: Smith\n..."
+    }]
   }
 }
 ```
@@ -132,6 +143,16 @@ When a message is posted to the channel, Slack sends an HTTP POST to your server
 
 ```python
 # api.py — simplified flow
+
+def _is_hubspot_message(settings, event):
+    """Only process HubSpot bot messages."""
+    if event.get("subtype") != "bot_message":
+        return False
+    if event.get("username", "").lower() != "hubspot":
+        return False
+    if not event.get("attachments"):
+        return False
+    return True
 
 @app.post("/slack/events")
 async def slack_events(req: Request, background: BackgroundTasks):
@@ -149,15 +170,18 @@ async def slack_events(req: Request, background: BackgroundTasks):
     
     event = payload.get("event", {})
     
-    # 3. Filter: only process new messages in our channel
-    if not _is_relevant_slack_message_event(settings, event):
-        return {"ok": True}
-    
-    # 4. ACK immediately, process in background (Slack 3s timeout)
-    background.add_task(_handle_message_event, settings, event)
+    # 3. Filter: only process HubSpot bot messages
+    if _is_hubspot_message(settings, event):
+        background.add_task(_handle_hubspot_lead, settings, event)
     
     return {"ok": True}
 ```
+
+**Why filter for HubSpot only?**
+
+- Prevents processing our own bot's replies (infinite loop)
+- Ignores unrelated messages in the channel
+- HubSpot has a specific message format we can reliably parse
 
 **Why background processing?**
 
@@ -170,7 +194,29 @@ Slack expects a response within 3 seconds. LLM inference can take longer, so we:
 
 ### 3. Classification (LLM)
 
-The message text is sent to an LLM with a structured output schema.
+The parsed lead data is sent to an LLM with a structured output schema.
+
+**Lead Parsing (HubSpot → HubSpotLead):**
+
+```python
+# models.py
+
+class HubSpotLead(BaseModel):
+    """Parsed lead data from HubSpot Slack message."""
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    company: str | None = None
+    message: str | None = None
+    raw_text: str = ""
+
+    @classmethod
+    def from_slack_event(cls, event: dict) -> HubSpotLead | None:
+        """Parse HubSpot bot message from Slack event."""
+        # Extract from attachments[0].fallback or .text
+        # Parse fields like *First Name*: Value
+        ...
+```
 
 **LLM Request:**
 
@@ -180,31 +226,36 @@ The message text is sent to an LLM with a structured output schema.
 SYSTEM_PROMPT = """
 You classify inbound leads from a consulting company contact form.
 
-Definitions:
-- spam: irrelevant, automated, SEO, crypto, junk
-- solicitation: vendors, sales pitches, recruiters, partnerships
+Classification labels:
+- spam: irrelevant, automated, SEO/link-building, crypto, junk
+- solicitation: vendors, sales pitches, recruiters, partnership offers
 - promising: genuine inquiry about services or collaboration
 
 Rules:
-- Be conservative
-- If unclear, choose spam
-- Provide a short reason
+- Be conservative — if unclear, choose spam
+- Extract the company name from the message or email domain if not provided
+- Provide a brief reason for your classification
 """
 
 # Using pydantic-ai for structured output
-classifier = Agent(
+agent = Agent(
     model=model,
-    result_type=LeadClassification,  # Enforces JSON schema
-    system_prompt=SYSTEM_PROMPT,
+    output_type=LeadClassification,  # Enforces JSON schema
+    instructions=SYSTEM_PROMPT,
 )
 
-result = classifier.run_sync(f'Message:\n"""\n{text}\n"""')
+# Send formatted lead data
+result = agent.run_sync(lead.to_prompt_text())
 ```
 
 **LLM Response (structured):**
 
 ```json
 {
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "email": "jane@acme.com",
+  "company": "Acme Corp",
   "label": "promising",
   "confidence": 0.92,
   "reason": "Genuine infrastructure consulting inquiry with specific technical requirements"
@@ -213,10 +264,10 @@ result = classifier.run_sync(f'Message:\n"""\n{text}\n"""')
 
 **Structured Output with pydantic-ai:**
 
-The `LeadClassification` model ensures the LLM returns valid JSON:
+The `LeadClassification` model ensures the LLM returns valid JSON with contact info:
 
 ```python
-# domain.py
+# models.py
 
 class LeadLabel(str, Enum):
     spam = "spam"
@@ -224,6 +275,13 @@ class LeadLabel(str, Enum):
     promising = "promising"
 
 class LeadClassification(BaseModel):
+    # Contact info (extracted/confirmed by LLM)
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    company: str | None = None  # Extracted from message or email domain
+
+    # Classification
     label: LeadLabel
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
@@ -238,10 +296,21 @@ If `DRY_RUN=false`, the bot posts a threaded reply:
 ```python
 # api.py
 
+label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}
+
+response_parts = [
+    f"{label_emoji[result.label.value]} *{result.label.value.upper()}* ({result.confidence:.0%})",
+    f"_{result.reason}_",
+]
+
+# Add extracted company if different from parsed
+if result.company and result.company != lead.company:
+    response_parts.append(f"\n📋 Company: {result.company}")
+
 client.chat_postMessage(
     channel=event["channel"],
     thread_ts=event["ts"],  # Reply in thread, not main channel
-    text=f"🧠 Lead classification: *{result.label}* ({result.confidence:.2f})\n_{result.reason}_",
+    text="\n".join(response_parts),
 )
 ```
 
@@ -249,15 +318,20 @@ client.chat_postMessage(
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ New lead from Jane Smith                                 │
-│ Company: Acme Corp                                       │
-│ Email: jane@acme.com                                     │
-│ Message: Hi, we're looking for help migrating our...     │
+│ 🚨 New Lead Alert!                                       │
+│ Via strong.io                                            │
+│ ┌─ HubSpot attachment ─────────────────────────────────┐ │
+│ │ *First Name*: Jane                                   │ │
+│ │ *Last Name*: Smith                                   │ │
+│ │ *Email*: jane@acme.com                              │ │
+│ │ *Message*: Hi, we're looking for help migrating...  │ │
+│ └──────────────────────────────────────────────────────┘ │
 │                                                          │
 │ ┌─ Thread ────────────────────────────────────────────┐  │
-│ │ 🧠 Lead classification: *promising* (0.92)          │  │
+│ │ 🟢 *PROMISING* (92%)                                │  │
 │ │ _Genuine infrastructure consulting inquiry with     │  │
 │ │ specific technical requirements_                    │  │
+│ │ 📋 Company: Acme Corp                               │  │
 │ └─────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -399,29 +473,40 @@ The system prompt is intentionally brief and rule-based:
 ```
 You classify inbound leads from a consulting company contact form.
 
-Definitions:
-- spam: irrelevant, automated, SEO, crypto, junk
-- solicitation: vendors, sales pitches, recruiters, partnerships
+You will receive lead information including name, email, and their message.
+Extract and return the contact details along with your classification.
+
+Classification labels:
+- spam: irrelevant, automated, SEO/link-building, crypto, junk
+- solicitation: vendors, sales pitches, recruiters, partnership offers
 - promising: genuine inquiry about services or collaboration
 
 Rules:
-- Be conservative
-- If unclear, choose spam
-- Provide a short reason
+- Be conservative — if unclear, choose spam
+- Extract the company name from the message or email domain if not provided
+- Provide a brief reason for your classification
 ```
 
 **Design decisions:**
 
 1. **Conservative default:** Ambiguous messages → spam. Better to manually review than miss a solicitation.
-2. **Short reason:** Forces the model to be concise; reasons appear in Slack.
-3. **No few-shot examples:** Keeps token count low; structured output handles formatting.
+2. **Company extraction:** LLM infers company from email domain (e.g., `@brownbear.com` → "Brown Bear") when not provided.
+3. **Short reason:** Forces the model to be concise; reasons appear in Slack.
+4. **No few-shot examples:** Keeps token count low; structured output handles formatting.
 
 ### Structured Output
 
-Using `pydantic-ai` ensures the LLM returns valid, typed data:
+Using `pydantic-ai` ensures the LLM returns valid, typed data including contact info:
 
 ```python
 class LeadClassification(BaseModel):
+    # Contact info (extracted/confirmed by LLM)
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    company: str | None = None    # Extracted from message or email domain
+
+    # Classification
     label: LeadLabel              # Enum: spam | solicitation | promising
     confidence: float             # 0.0–1.0, validated by Pydantic
     reason: str                   # Short explanation
@@ -439,7 +524,7 @@ The agent automatically:
 
 ### Purpose
 
-Before enabling live responses (`DRY_RUN=false`), you should verify the classifier works well on your actual messages.
+Before enabling live responses (`DRY_RUN=false`), you should verify the classifier works well on your actual HubSpot leads.
 
 Backtesting lets you:
 1. **Evaluate accuracy** on historical data
@@ -451,31 +536,34 @@ Backtesting lets you:
 ```python
 # backtest.py — simplified
 
-def run_backtest(settings, limit=50):
-    # 1. Fetch recent messages from Slack
+def fetch_hubspot_leads(settings, limit=50):
+    """Fetch only HubSpot bot messages from channel history."""
     client = slack_client(settings)
-    resp = client.conversations_history(
-        channel=settings.slack_channel_id,
-        limit=limit
-    )
+    resp = client.conversations_history(channel=settings.slack_channel_id, limit=limit)
     
-    # 2. Filter to top-level messages only
     for msg in resp.get("messages", []):
-        if msg.get("subtype"):      # Skip system messages
+        # Only process HubSpot bot messages
+        if msg.get("subtype") != "bot_message":
             continue
-        if msg.get("thread_ts"):    # Skip thread replies
+        if msg.get("username", "").lower() != "hubspot":
             continue
         
-        text = msg.get("text", "")
+        lead = HubSpotLead.from_slack_event(msg)
+        if lead:
+            yield msg, lead
+
+def run_backtest(settings, limit=50):
+    for msg, lead in fetch_hubspot_leads(settings, limit=limit):
+        result = classify_lead(settings, lead)
         
-        # 3. Classify each message
-        result = classify_message(settings, text)
-        
-        # 4. Print results
         print("-" * 60)
-        print(text)
-        print(f"→ {result.label} ({result.confidence:.2f})")
+        print(f"Name: {lead.first_name} {lead.last_name}")
+        print(f"Email: {lead.email}")
+        print(f"Message: {lead.message[:200]}...")
+        print(f"→ {result.label.value} ({result.confidence:.0%})")
         print(f"Reason: {result.reason}")
+        if result.company:
+            print(f"Extracted Company: {result.company}")
 ```
 
 **Running a backtest:**
@@ -487,26 +575,43 @@ leads-agent backtest --limit 20
 **Sample output:**
 
 ```
-Backtesting last 20 messages
+Backtesting last 20 HubSpot leads
 
 ------------------------------------------------------------
-New lead from John Doe
-Company: Tech Startup
-Email: john@startup.io
-Message: Looking for DevOps consulting, specifically around CI/CD pipelines
-→ promising (0.94)
-Reason: Genuine DevOps consulting inquiry with specific requirements
+Name: Nick Hall
+Email: nick@hucktracks.com
+Message: I'm looking to leverage computer vision to identify individuals on camera...
+🟢 PROMISING (90%)
+Reason: Genuine request for services related to computer vision
+Extracted Company: Hucktracks
 
 ------------------------------------------------------------
-Hi! We're an SEO agency and can help you rank #1 on Google.
-Contact us at seo@spammy.com for a free audit!
-→ solicitation (0.89)
-Reason: SEO vendor sales pitch
+Name: Mai Nguyen
+Email: mai.seoadvisor@gmail.com
+Message: Hi, I'm an Expert Link Builder. I have high-authority sites...
+🔴 SPAM (90%)
+Reason: SEO/link-building solicitation
+Extracted Company: seoadvisor
 
 ------------------------------------------------------------
-🚀 CRYPTO OPPORTUNITY! 10X YOUR INVESTMENT NOW 🚀
-→ spam (0.98)
-Reason: Cryptocurrency promotion spam
+Name: Jacob Shenderovich
+Email: jacob.shenderovich@brownbear.com
+Message: Hello, I was hoping to get information on data ingestion pipelines...
+🟢 PROMISING (90%)
+Reason: Detailed inquiry about consulting services
+Extracted Company: Brown Bear
+```
+
+### Debugging: Pull Channel History
+
+To inspect raw Slack messages (useful for debugging parsing issues):
+
+```bash
+# Save to JSON file
+leads-agent pull-history --limit 20 --output history.json
+
+# Print to console
+leads-agent pull-history --limit 5 --print
 ```
 
 ### Interpreting Results
@@ -600,17 +705,17 @@ DRY_RUN=false
 │  │          │    │          │◀───│ events       │◀───│                  │  │
 │  └──────────┘    └──────────┘    └──────────────┘    └──────────────────┘  │
 │       │               │                │                      │            │
-│   Form submit    Message posted    Verify sig +          Classify          │
-│                                    ACK quickly            message          │
+│   Form submit    Bot message      Filter HubSpot         Classify          │
+│                  with lead data   Parse contact info     Extract company   │
 │                                         │                      │            │
 │                                    Background task        Return JSON      │
 │                                         │                      │            │
-│                                    Post threaded      {label, confidence,  │
-│                                    reply (if not       reason}             │
-│                                    DRY_RUN)                                │
+│                                    Post threaded      {first_name, email,  │
+│                                    reply (if not       company, label,     │
+│                                    DRY_RUN)            confidence, reason} │
 │                                                                             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  BACKTEST MODE: Fetch historical messages → Classify → Print results       │
+│  BACKTEST MODE: Fetch HubSpot leads → Parse → Classify → Print results     │
 │  (No Slack posts, just console output for evaluation)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```

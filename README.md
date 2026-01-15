@@ -1,11 +1,18 @@
 # 🧠 Leads Agent
 
-AI-powered Slack bot that automatically classifies inbound leads from your contact form.
+AI-powered Slack bot that automatically classifies inbound leads from HubSpot.
 
-**Labels:**
+When HubSpot posts a new lead to your Slack channel, Leads Agent parses the contact info, classifies it, and posts a threaded reply with the result.
+
+**Classification Labels:**
 - 🟢 **promising** — Genuine inquiry about services or collaboration
 - 🟡 **solicitation** — Vendors, sales pitches, recruiters, partnerships
-- 🔴 **spam** — Irrelevant, automated, SEO, crypto, junk
+- 🔴 **spam** — Irrelevant, automated, SEO/link-building, crypto, junk
+
+**Extracted Fields:**
+- First name, last name, email
+- Company (extracted from message or email domain)
+- Classification with confidence score and reason
 
 ---
 
@@ -198,11 +205,17 @@ leads-agent config
 # Start the API server
 leads-agent run [--host 0.0.0.0] [--port 8000] [--reload]
 
-# Backtest against historical messages
+# Backtest against historical HubSpot leads
 leads-agent backtest [--limit 50]
 
+# Fetch channel history to JSON (for debugging)
+leads-agent pull-history [--limit 50] [--output history.json]
+
 # Classify a single message (for testing)
-leads-agent classify "Hi, I'm interested in your consulting services..."
+leads-agent classify "First Name: John
+Last Name: Smith
+Email: john@acme.com
+Message: We need help with AWS migration"
 ```
 
 ### Running the Server
@@ -285,11 +298,11 @@ leads-agent/
 ├── src/leads_agent/
 │   ├── __init__.py      # Package exports
 │   ├── __main__.py      # python -m leads_agent
-│   ├── api.py           # FastAPI application
-│   ├── backtest.py      # Historical message testing
+│   ├── api.py           # FastAPI app — filters HubSpot messages
+│   ├── backtest.py      # Historical HubSpot lead testing
 │   ├── cli.py           # Typer CLI
 │   ├── config.py        # Settings via pydantic-settings
-│   ├── domain.py        # Data models
+│   ├── models.py        # Data models (HubSpotLead, LeadClassification)
 │   ├── llm.py           # LLM agent for classification
 │   └── slack.py         # Slack client helpers
 ├── docs/
@@ -321,11 +334,19 @@ leads-agent/
 
 ### No classifications happening
 
+- **Check that HubSpot is posting to the channel** — the bot only processes messages from HubSpot
+- Verify HubSpot messages have `username: "HubSpot"` (check with `leads-agent pull-history --print`)
 - Check that Event Subscriptions are enabled in your Slack App
 - Verify the bot is subscribed to `message.channels` and/or `message.groups`
 - **Ensure the bot is invited to the channel** — the bot only receives events from channels it's a member of
 - For private channels: confirm `groups:history` and `groups:read` scopes are added
 - Check server logs for incoming events
+
+### Backtest shows "No HubSpot leads found"
+
+- Run `leads-agent pull-history --print` to see raw messages
+- Verify HubSpot is the one posting (check `username` field)
+- Make sure HubSpot messages have attachments with lead data
 
 ### LLM connection errors
 

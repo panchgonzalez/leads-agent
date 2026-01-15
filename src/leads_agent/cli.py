@@ -152,12 +152,23 @@ def run(
 @app.command()
 def backtest(
     limit: int = typer.Option(50, "--limit", "-n", help="Number of messages to fetch"),
+    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
+    max_searches: int = typer.Option(4, "--max-searches", help="Max web searches per lead"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Show agent steps and token usage"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full message history (with --debug)"),
 ):
-    """Run classifier on historical Slack messages for testing."""
+    """Run classifier on historical HubSpot leads for testing."""
     from leads_agent.backtest import run_backtest
 
-    rprint(Panel.fit("🔬 [bold magenta]Backtesting Lead Classifier[/]", border_style="magenta"))
-    run_backtest(limit=limit)
+    modes = []
+    if enrich:
+        modes.append("enrichment")
+    if debug:
+        modes.append("debug")
+    mode_str = f" [dim]({', '.join(modes)})[/]" if modes else ""
+    title = f"🔬 [bold magenta]Backtesting Lead Classifier[/]{mode_str}"
+    rprint(Panel.fit(title, border_style="magenta"))
+    run_backtest(limit=limit, enrich=enrich, max_searches=max_searches, debug=debug, verbose=verbose)
 
 
 @app.command("pull-history")
@@ -224,16 +235,22 @@ def classify(
     message: str = typer.Argument(..., help="Message text to classify"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Show message history and agent trace"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full message content (no truncation)"),
+    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
+    max_searches: int = typer.Option(4, "--max-searches", help="Max web searches for enrichment"),
 ):
     """Classify a single message (for quick testing)."""
     from leads_agent.llm import ClassificationResult, classify_message
+    from leads_agent.models import EnrichedLeadClassification
 
     settings = get_settings()
 
-    rprint(Panel.fit("🧠 [bold yellow]Classifying Message[/]", border_style="yellow"))
+    title = "🧠 [bold yellow]Classifying Message[/]"
+    if enrich:
+        title += " [dim](with enrichment)[/]"
+    rprint(Panel.fit(title, border_style="yellow"))
     rprint(f"[dim]{message}[/]\n")
 
-    result = classify_message(settings, message, debug=debug)
+    result = classify_message(settings, message, debug=debug, enrich=enrich, max_searches=max_searches)
 
     # Handle both return types
     if isinstance(result, ClassificationResult):
@@ -267,6 +284,37 @@ def classify(
         table.add_row("Company", classification.company)
 
     console.print(table)
+
+    # Show enrichment results if available
+    if isinstance(classification, EnrichedLeadClassification):
+        if classification.company_research:
+            rprint("\n[bold green]─── Company Research ───[/]")
+            cr = classification.company_research
+            rprint(f"[cyan]Company:[/] {cr.company_name}")
+            rprint(f"[cyan]Description:[/] {cr.company_description}")
+            if cr.industry:
+                rprint(f"[cyan]Industry:[/] {cr.industry}")
+            if cr.company_size:
+                rprint(f"[cyan]Size:[/] {cr.company_size}")
+            if cr.website:
+                rprint(f"[cyan]Website:[/] {cr.website}")
+            if cr.relevance_notes:
+                rprint(f"[cyan]Relevance:[/] {cr.relevance_notes}")
+
+        if classification.contact_research:
+            rprint("\n[bold green]─── Contact Research ───[/]")
+            cr = classification.contact_research
+            rprint(f"[cyan]Name:[/] {cr.full_name}")
+            if cr.title:
+                rprint(f"[cyan]Title:[/] {cr.title}")
+            if cr.linkedin_summary:
+                rprint(f"[cyan]Summary:[/] {cr.linkedin_summary}")
+            if cr.relevance_notes:
+                rprint(f"[cyan]Relevance:[/] {cr.relevance_notes}")
+
+        if classification.research_summary:
+            rprint("\n[bold green]─── Research Summary ───[/]")
+            rprint(classification.research_summary)
 
     # Show debug info if requested
     if debug and isinstance(result, ClassificationResult):
