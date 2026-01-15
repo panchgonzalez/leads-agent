@@ -45,13 +45,37 @@ def _handle_message_event(settings: Settings, event: dict[str, Any]) -> None:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    app = FastAPI()
+    app = FastAPI(title="Leads Agent", description="AI-powered lead classification bot")
+
+    @app.on_event("startup")
+    async def startup():
+        print("[STARTUP] Routes registered:")
+        for route in app.routes:
+            if hasattr(route, "methods"):
+                print(f"  {route.methods} {route.path}")
+
+    @app.get("/")
+    async def health():
+        """Health check endpoint."""
+        return {"status": "ok", "service": "leads-agent"}
 
     @app.post("/slack/events")
     async def slack_events(req: Request, background: BackgroundTasks):
         body = await req.body()
+
+        # Log incoming request for debugging
+        sig = req.headers.get("X-Slack-Signature", "MISSING")
+        ts = req.headers.get("X-Slack-Request-Timestamp", "MISSING")
+        print("\n[SLACK] Incoming request")
+        print(f"  Headers: X-Slack-Signature={sig[:20] if sig else 'NONE'}...")
+        print(f"  Headers: X-Slack-Request-Timestamp={ts}")
+
         if not verify_slack_request(settings, req, body):
+            print("  [ERROR] Signature verification FAILED")
+            print(f"  Signing secret configured: {settings.slack_signing_secret is not None}")
             return {"error": "Invalid request"}
+
+        print("  [OK] Signature verified")
 
         try:
             payload = await req.json()
@@ -60,6 +84,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Slack URL verification
         if payload.get("type") == "url_verification":
+            print("  [OK] URL verification challenge received")
             return {"challenge": payload.get("challenge")}
 
         event = payload.get("event", {}) or {}

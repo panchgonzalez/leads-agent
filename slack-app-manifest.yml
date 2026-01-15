@@ -12,31 +12,37 @@
 # After creating:
 #   - Copy Bot Token from "OAuth & Permissions" → SLACK_BOT_TOKEN
 #   - Copy Signing Secret from "Basic Information" → SLACK_SIGNING_SECRET
+#
+# IMPORTANT: The bot only receives messages from channels it's invited to.
+# After installing, invite the bot to your channel(s) with: /invite @Leads Classifier
 
 display_information:
-  name: Leads Classifier
-  description: AI-powered lead classification bot
+  name: Leads Agent
+  description: AI-powered lead enrichment agent
   background_color: "#1a1a2e"
 
 features:
   bot_user:
-    display_name: Leads Classifier
+    display_name: Leads Agent
     always_online: true
 
 oauth_config:
   scopes:
     bot:
-      - channels:history    # Read messages in public channels
-      - channels:read       # View basic channel info
+      - channels:history    # Read messages in public channels the bot is invited to
+      - channels:read       # View basic public channel info
+      - groups:history      # Read messages in private channels the bot is invited to
+      - groups:read         # View basic private channel info
       - chat:write          # Send messages as the bot
 
 settings:
   event_subscriptions:
     # ⚠️  IMPORTANT: Replace with your actual server URL
-    # For local dev, use ngrok: ngrok http 8000
+    # For local dev, use ngrok: ngrok http 8000 or tailscale: tailscale funnel 8000
     request_url: https://YOUR_DOMAIN/slack/events
     bot_events:
-      - message.channels    # Listen for messages in public channels
+      - message.channels    # Messages in public channels (bot must be invited)
+      - message.groups      # Messages in private channels (bot must be invited)
 
   org_deploy_enabled: false
   socket_mode_enabled: false

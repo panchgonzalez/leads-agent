@@ -32,15 +32,15 @@ This document explains how Leads Agent works, the data flow from lead submission
 
 ## Overview
 
-Leads Agent is a webhook-based service that listens to a Slack channel, classifies incoming messages using an LLM, and posts classification results as threaded replies.
+Leads Agent is a webhook-based service that listens to a Slack channel, classifies incoming messages using an Agent, and posts classification results as threaded replies.
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   HubSpot   │────▶│    Slack    │────▶│ Leads Agent  │────▶│     LLM     │
-│  (or CRM)   │     │   Channel   │     │   (FastAPI)  │     │  (Ollama/   │
-│             │     │             │◀────│              │     │   OpenAI)   │
+│   HubSpot   │────▶│    Slack    │────▶│ Leads Agent  │────▶│    Agent    │
+│  (or CRM)   │     │   Channel   │     │   (FastAPI)  │     │             │
+│             │     │             │◀────│              │     │             │
 └─────────────┘     └─────────────┘     └──────────────┘     └─────────────┘
-     Form              Message            POST /slack/         Classify
+     Form              Message            POST /slack/         Enrich
    submission          posted              events              message
 ```
 
@@ -284,26 +284,33 @@ features:
 oauth_config:
   scopes:
     bot:                           # Permissions the bot requests
-      - channels:history           # Read channel messages
-      - channels:read              # See channel metadata
+      - channels:history           # Read messages in public channels (bot must be invited)
+      - channels:read              # See public channel metadata
+      - groups:history             # Read messages in private channels (bot must be invited)
+      - groups:read                # See private channel metadata
       - chat:write                 # Post messages
 
 settings:
   event_subscriptions:
     request_url: https://YOUR_DOMAIN/slack/events  # Your webhook URL
     bot_events:
-      - message.channels           # Subscribe to public channel messages
+      - message.channels           # Messages in public channels (bot must be member)
+      - message.groups             # Messages in private channels (bot must be member)
 ```
+
+> **Important:** The bot only receives messages from channels it's been invited to. This applies to both public and private channels. After installing the app, you must invite the bot to each channel where you want it to operate.
 
 ### OAuth Scopes Explained
 
 | Scope | Why Needed |
 |-------|------------|
-| `channels:history` | Read messages in public channels (required for backtesting + receiving events) |
-| `channels:read` | Access basic channel info (name, ID) — used by some SDK methods |
+| `channels:history` | Read messages in public channels the bot is invited to (required for backtesting + receiving events) |
+| `channels:read` | Access basic public channel info (name, ID) — used by some SDK methods |
+| `groups:history` | Read messages in private channels the bot is invited to |
+| `groups:read` | Access basic private channel info (name, ID) |
 | `chat:write` | Post messages as the bot (classification replies) |
 
-> **Private channels:** Would require `groups:history` and `groups:read` instead.
+> **Note:** The `groups:*` scopes are Slack's terminology for private channels. Despite the naming, this does not grant access to DMs or group DMs—only private channels where the bot is explicitly invited.
 
 ### Event Subscriptions
 

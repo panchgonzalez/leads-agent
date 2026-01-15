@@ -133,9 +133,11 @@ Skip to [Invite the Bot](#step-6-invite-the-bot).
 
 1. Navigate to **OAuth & Permissions** in the sidebar
 2. Under **Scopes → Bot Token Scopes**, add:
-   - `channels:history` — Read messages in public channels
+   - `channels:history` — Read messages in public channels the bot is invited to
+   - `channels:read` — View basic public channel info
+   - `groups:history` — Read messages in private channels the bot is invited to
+   - `groups:read` — View basic private channel info
    - `chat:write` — Send messages as the bot
-   - `channels:read` — View basic channel info
 3. Click **Install to Workspace** and authorize
 
 #### Step 3: Get Your Credentials
@@ -161,17 +163,22 @@ Skip to [Invite the Bot](#step-6-invite-the-bot).
 
 Under **Subscribe to bot events**, click **Add Bot User Event** and add:
 
-- `message.channels` — Messages in public channels
+- `message.channels` — Messages in public channels (bot must be invited)
+- `message.groups` — Messages in private channels (bot must be invited)
 
 Click **Save Changes**.
 
 #### Step 6: Invite the Bot
+
+**Important:** The bot only receives messages from channels it's been invited to. This works for both public and private channels.
 
 In Slack, invite the bot to your leads channel:
 
 ```
 /invite @Leads Classifier
 ```
+
+> **Note:** For private channels, you must have the bot invited before it can receive any messages. The bot will not have access to message history from before it was invited.
 
 ---
 
@@ -310,7 +317,9 @@ leads-agent/
 ### No classifications happening
 
 - Check that Event Subscriptions are enabled in your Slack App
-- Verify the bot is subscribed to `message.channels`
+- Verify the bot is subscribed to `message.channels` and/or `message.groups`
+- **Ensure the bot is invited to the channel** — the bot only receives events from channels it's a member of
+- For private channels: confirm `groups:history` and `groups:read` scopes are added
 - Check server logs for incoming events
 
 ### LLM connection errors

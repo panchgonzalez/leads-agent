@@ -15,7 +15,7 @@ def slack_client(settings: Settings) -> WebClient:
     return WebClient(token=token)
 
 
-def verify_slack_request(settings: Settings, req: Request, body: bytes) -> bool:
+def verify_slack_request(settings: Settings, req: Request, body: bytes, debug: bool = True) -> bool:
     """
     Verify Slack request signature.
 
@@ -23,20 +23,29 @@ def verify_slack_request(settings: Settings, req: Request, body: bytes) -> bool:
     """
 
     if settings.slack_signing_secret is None:
+        if debug:
+            print("  [VERIFY] FAILED: No signing secret configured")
         return False
 
     timestamp = req.headers.get("X-Slack-Request-Timestamp")
     signature = req.headers.get("X-Slack-Signature")
 
     if not timestamp or not signature:
+        if debug:
+            print(f"  [VERIFY] FAILED: Missing headers (timestamp={timestamp}, signature={signature})")
         return False
 
     try:
         ts = int(timestamp)
     except ValueError:
+        if debug:
+            print(f"  [VERIFY] FAILED: Invalid timestamp format: {timestamp}")
         return False
 
-    if abs(time.time() - ts) > 60 * 5:
+    time_diff = abs(time.time() - ts)
+    if time_diff > 60 * 5:
+        if debug:
+            print(f"  [VERIFY] FAILED: Request too old ({time_diff:.0f}s)")
         return False
 
     basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
@@ -49,5 +58,11 @@ def verify_slack_request(settings: Settings, req: Request, body: bytes) -> bool:
         ).hexdigest()
     )
 
-    return hmac.compare_digest(expected, signature)
+    if not hmac.compare_digest(expected, signature):
+        if debug:
+            print("  [VERIFY] FAILED: Signature mismatch")
+            print(f"    Expected: {expected[:30]}...")
+            print(f"    Got:      {signature[:30]}...")
+        return False
 
+    return True
