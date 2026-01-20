@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import logfire
 import typer
 from rich import print as rprint
 from rich.console import Console
@@ -13,6 +14,9 @@ from rich.table import Table
 
 from leads_agent.config import get_settings
 from leads_agent.prompts import get_prompt_manager
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
 
 app = typer.Typer(
     name="leads-agent",

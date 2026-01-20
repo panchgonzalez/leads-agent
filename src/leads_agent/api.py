@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import json
 from typing import Any
 
+import logfire
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
@@ -11,6 +10,9 @@ from .models import HubSpotLead
 from .processor import process_and_post
 from .prompts import ICPConfig, PromptConfig, get_prompt_manager
 from .slack import verify_slack_request
+
+logfire.configure()
+logfire.instrument_pydantic_ai()
 
 
 class PromptConfigResponse(BaseModel):
