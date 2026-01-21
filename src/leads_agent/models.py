@@ -8,9 +8,15 @@ from pydantic import BaseModel, Field
 
 
 class LeadLabel(str, Enum):
-    spam = "spam"
-    solicitation = "solicitation"
+    ignore = "ignore"
     promising = "promising"
+
+class LeadAction(str, Enum):
+    """Suggested action to take on this lead."""
+
+    ignore = "ignore"
+    follow_up = "follow_up"
+    prioritize = "prioritize"
 
 
 class HubSpotLead(BaseModel):
@@ -103,9 +109,19 @@ class LeadClassification(BaseModel):
     company: str | None = Field(default=None, description="Contact's company name (if mentioned)")
 
     # Classification
-    label: LeadLabel = Field(description="Classification label: spam, solicitation, or promising")
+    label: LeadLabel = Field(description="Go/no-go decision: ignore or promising")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence score 0.0-1.0")
     reason: str = Field(description="Brief explanation for the classification")
+
+    # Helpful synthesis to pass downstream (research/scoring)
+    lead_summary: str | None = Field(
+        default=None,
+        description="1-2 sentence summary of the lead's intent and context (no fluff).",
+    )
+    key_signals: list[str] | None = Field(
+        default=None,
+        description="Short bullet-like signals (e.g., 'student project', 'budget mentioned', 'vendor pitch').",
+    )
 
 
 class CompanyResearch(BaseModel):
@@ -137,3 +153,19 @@ class EnrichedLeadClassification(LeadClassification):
         default=None, description="Research findings about the contact person"
     )
     research_summary: str | None = Field(default=None, description="Executive summary of research findings")
+
+    # Scoring results (only populated when we do scoring; typically for promising leads)
+    score: int | None = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="Lead score 1-5 where 1=not worth pursuing and 5=high-intent + strong ICP fit.",
+    )
+    action: LeadAction | None = Field(
+        default=None,
+        description="Recommended action (ignore/follow_up/prioritize).",
+    )
+    score_reason: str | None = Field(
+        default=None,
+        description="Brief explanation for the score/action decision.",
+    )

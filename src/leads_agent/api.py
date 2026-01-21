@@ -69,7 +69,6 @@ def _handle_hubspot_lead(settings: Settings, event: dict[str, Any]) -> None:
         lead,
         channel_id=event["channel"],
         thread_ts=event["ts"],  # Reply in thread
-        enrich=False,  # Production mode doesn't enrich by default
     )
 
     print("\n[CLASSIFICATION]")

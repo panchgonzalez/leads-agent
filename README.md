@@ -13,23 +13,20 @@
 
 When HubSpot posts a lead to your Slack channel, Leads Agent:
 1. Parses contact info (name, email, company)
-2. Classifies the lead using an LLM
-3. **Optionally researches** promising leads via web search
-4. Posts a threaded reply with results
+2. Does a fast **go/no-go** triage (promising vs ignore)
+3. If **promising**, researches the company/contact and produces a **1–5 score** + recommended action
+4. Posts a threaded reply with the decision and context
 
-## Classification Labels
+## Classification & Scoring
 
-| Label | Description |
-|-------|-------------|
-| 🟢 **promising** | Genuine inquiry about services or collaboration |
-| 🟡 **solicitation** | Vendors, sales pitches, recruiters, partnerships |
-| 🔴 **spam** | Irrelevant, automated, SEO/link-building, junk |
+- **Triage decision**: `promising` or `ignore`
+- **If promising**: enrich via web search + score 1–5 with context and recommended action
 
 ## Features
 
 - **HubSpot-specific parsing** — Extracts first name, last name, email, company from HubSpot message format
-- **Smart classification** — Infers company from email domain when not provided
-- **Web search enrichment** — Researches promising leads (company info, contact role) via DuckDuckGo
+- **Smart triage** — Infers company from email domain when not provided
+- **Research + scoring** — For promising leads, researches context (company/contact) and outputs a 1–5 score
 - **Threaded replies** — Keeps channels clean by replying in threads
 - **Multiple run modes** — Backtest, test channel, replay to production
 
@@ -121,8 +118,7 @@ leads-agent prompts --full          # Show rendered prompts
 leads-agent run [--reload]          # Start API server
 
 # Classification
-leads-agent classify "message"      # Classify a single message
-leads-agent classify "msg" --enrich # Research promising leads
+leads-agent classify "message"      # Triage; if promising, auto research + score
 
 # Testing & Validation
 leads-agent backtest --limit 20     # Console-only testing
@@ -147,7 +143,6 @@ All commands respect the `DRY_RUN` config setting. Override with `--dry-run` or 
 
 | Option | Description |
 |--------|-------------|
-| `--enrich`, `-e` | Research promising leads via web search |
 | `--limit`, `-n` | Number of leads to process |
 | `--max-searches` | Limit web searches per lead (default: 4) |
 | `--dry-run` / `--live` | Override DRY_RUN config |
@@ -157,14 +152,14 @@ All commands respect the `DRY_RUN` config setting. Override with `--dry-run` or 
 ### Examples
 
 ```bash
-# Backtest with enrichment and debug output
-leads-agent backtest --limit 10 --enrich --debug
+# Backtest with debug output
+leads-agent backtest --limit 10 --debug
 
 # Test on separate channel (safe)
-leads-agent test --limit 5 --enrich
+leads-agent test --limit 5
 
 # Replay to production (posts thread replies)
-leads-agent replay --limit 5 --enrich --live
+leads-agent replay --limit 5 --live
 ```
 
 ---

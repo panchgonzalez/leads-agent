@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-import logfire
 import typer
 from rich import print as rprint
 from rich.console import Console
@@ -14,9 +13,6 @@ from rich.table import Table
 
 from leads_agent.config import get_settings
 from leads_agent.prompts import get_prompt_manager
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
 
 app = typer.Typer(
     name="leads-agent",
@@ -370,7 +366,6 @@ def run(
 @app.command()
 def backtest(
     limit: int = typer.Option(50, "--limit", "-n", help="Number of messages to fetch"),
-    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
     max_searches: int = typer.Option(4, "--max-searches", help="Max web searches per lead"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Show agent steps and token usage"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full message history (with --debug)"),
@@ -379,20 +374,17 @@ def backtest(
     from leads_agent.backtest import run_backtest
 
     modes = []
-    if enrich:
-        modes.append("enrichment")
     if debug:
         modes.append("debug")
     mode_str = f" [dim]({', '.join(modes)})[/]" if modes else ""
     title = f"🔬 [bold magenta]Backtesting Lead Classifier[/]{mode_str}"
     rprint(Panel.fit(title, border_style="magenta"))
-    run_backtest(limit=limit, enrich=enrich, max_searches=max_searches, debug=debug, verbose=verbose)
+    run_backtest(limit=limit, max_searches=max_searches, debug=debug, verbose=verbose)
 
 
 @app.command()
 def test(
     limit: int = typer.Option(5, "--limit", "-n", help="Number of leads to process"),
-    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
     max_searches: int = typer.Option(4, "--max-searches", help="Max web searches per lead"),
     test_channel: str = typer.Option(None, "--channel", "-c", help="Test channel ID"),
     dry_run: bool = typer.Option(None, "--dry-run/--live", help="Override DRY_RUN config setting"),
@@ -423,7 +415,7 @@ def test(
 
     rprint(Panel.fit("🧪 [bold cyan]Test Mode[/]", border_style="cyan"))
     rprint(f"[dim]Source: {settings.slack_channel_id} → Target: {target_channel}[/]")
-    rprint(f"[dim]Limit: {limit} | Enrich: {enrich} | Dry run: {settings.dry_run}[/]\n")
+    rprint(f"[dim]Limit: {limit} | Dry run: {settings.dry_run}[/]\n")
 
     count = 0
     for msg, lead in fetch_hubspot_leads(settings, limit=limit):
@@ -435,12 +427,11 @@ def test(
             lead,
             channel_id=target_channel,
             thread_ts=None,  # Post to main channel, not as thread
-            enrich=enrich,
             max_searches=max_searches,
             include_lead_info=True,  # Include lead details in test posts
         )
 
-        label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}.get(result.label, "⚪")
+        label_emoji = {"ignore": "🚫", "promising": "✅"}.get(result.label, "❓")
         rprint(f"    {label_emoji} {result.label.upper()} ({result.classification.confidence:.0%})")
 
         if settings.dry_run:
@@ -457,7 +448,6 @@ def test(
 @app.command()
 def replay(
     limit: int = typer.Option(5, "--limit", "-n", help="Number of leads to process"),
-    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
     max_searches: int = typer.Option(4, "--max-searches", help="Max web searches per lead"),
     dry_run: bool = typer.Option(None, "--dry-run/--live", help="Override DRY_RUN config setting"),
     skip_replied: bool = typer.Option(True, "--skip-replied/--no-skip-replied", help="Skip already-replied leads"),
@@ -483,7 +473,7 @@ def replay(
 
     rprint(Panel.fit("🔄 [bold yellow]Replay Mode[/]", border_style="yellow"))
     rprint(f"[dim]Channel: {settings.slack_channel_id}[/]")
-    rprint(f"[dim]Limit: {limit} | Enrich: {enrich} | Dry run: {settings.dry_run} | Skip replied: {skip_replied}[/]\n")
+    rprint(f"[dim]Limit: {limit} | Dry run: {settings.dry_run} | Skip replied: {skip_replied}[/]\n")
 
     if not settings.dry_run:
         if not Confirm.ask("[yellow]This will post replies to the production channel. Continue?[/]"):
@@ -521,12 +511,11 @@ def replay(
             lead,
             channel_id=settings.slack_channel_id,
             thread_ts=msg["ts"],  # Reply to original message
-            enrich=enrich,
             max_searches=max_searches,
             include_lead_info=False,  # Don't include lead info, it's in the parent message
         )
 
-        label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}.get(result.label, "⚪")
+        label_emoji = {"ignore": "🚫", "promising": "✅"}.get(result.label, "❓")
         rprint(f"    {label_emoji} {result.label.upper()} ({result.classification.confidence:.0%})")
 
         if settings.dry_run:
@@ -604,22 +593,19 @@ def classify(
     message: str = typer.Argument(..., help="Message text to classify"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Show message history and agent trace"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full message content (no truncation)"),
-    enrich: bool = typer.Option(False, "--enrich", "-e", help="Research promising leads with web search"),
     max_searches: int = typer.Option(4, "--max-searches", help="Max web searches for enrichment"),
 ):
     """Classify a single message (for quick testing)."""
-    from leads_agent.llm import ClassificationResult, classify_message
+    from leads_agent.agent import ClassificationResult, classify_message
     from leads_agent.models import EnrichedLeadClassification
 
     settings = get_settings()
 
     title = "🧠 [bold yellow]Classifying Message[/]"
-    if enrich:
-        title += " [dim](with enrichment)[/]"
     rprint(Panel.fit(title, border_style="yellow"))
     rprint(f"[dim]{message}[/]\n")
 
-    result = classify_message(settings, message, debug=debug, enrich=enrich, max_searches=max_searches)
+    result = classify_message(settings, message, debug=debug, max_searches=max_searches)
 
     # Handle both return types
     if isinstance(result, ClassificationResult):
@@ -637,11 +623,22 @@ def classify(
     table.add_column("Field", style="cyan")
     table.add_column("Value")
 
-    label_color = {"spam": "red", "solicitation": "yellow", "promising": "green"}.get(label_value, "white")
-
-    table.add_row("Label", f"[bold {label_color}]{label_value}[/]")
+    decision_color = {"ignore": "red", "promising": "green"}.get(label_value, "white")
+    table.add_row("Decision", f"[bold {decision_color}]{label_value}[/]")
     table.add_row("Confidence", f"{confidence:.0%}")
     table.add_row("Reason", reason)
+
+    if getattr(classification, "score", None) is not None:
+        table.add_row("Score", f"{classification.score}/5")
+    if getattr(classification, "action", None) is not None:
+        table.add_row("Action", classification.action.value)
+    if getattr(classification, "score_reason", None):
+        table.add_row("Score Reason", classification.score_reason)
+
+    if classification.lead_summary:
+        table.add_row("Summary", classification.lead_summary)
+    if classification.key_signals:
+        table.add_row("Signals", ", ".join(classification.key_signals))
 
     # Show extracted contact info if present
     if classification.first_name or classification.last_name:
