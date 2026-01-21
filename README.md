@@ -17,6 +17,11 @@ When HubSpot posts a lead to your Slack channel, Leads Agent:
 3. If **promising**, researches the company/contact and produces a **1–5 score** + recommended action
 4. Posts a threaded reply with the decision and context
 
+## Tracing (Logfire)
+
+Lead processing is wrapped in a single Logfire span (`lead.process`) so the triage/research/scoring agent traces are grouped under one lead.
+In Slack-driven flows, the span uses the Slack `thread_ts` as the `lead_id` for easy correlation.
+
 ## Classification & Scoring
 
 - **Triage decision**: `promising` or `ignore`

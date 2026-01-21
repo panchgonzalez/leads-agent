@@ -7,8 +7,12 @@ Testing: Pull history → process → post to test channel
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import logfire
+from opentelemetry import trace
 
 from .agent import classify_lead
 from .models import EnrichedLeadClassification, HubSpotLead, LeadClassification
@@ -218,14 +222,51 @@ def process_and_post(
     Returns:
         ProcessedLead with results
     """
-    processed = process_lead(settings, lead, max_searches=max_searches)
+    # Group all agent traces (triage/research/scoring) and Slack posting under one lead span.
+    email_domain = ""
+    if lead.email and "@" in lead.email:
+        email_domain = lead.email.split("@", 1)[1].lower()
 
-    post_to_slack(
-        settings,
-        processed,
-        channel_id=channel_id,
-        thread_ts=thread_ts,
+    # Prefer Slack timestamp when available; otherwise fall back to a stable short hash.
+    trace_id = thread_ts or (lead.email.lower() if lead.email else "")
+    if not trace_id:
+        base = "|".join(
+            [
+                lead.company or "",
+                email_domain,
+                lead.first_name or "",
+                lead.last_name or "",
+                (lead.message or lead.raw_text or "")[:500],
+            ]
+        )
+        trace_id = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
+
+    current = trace.get_current_span()
+    has_parent = current.get_span_context().is_valid
+
+    # Only create a top-level lead.process span if we aren't already inside one.
+    span_name = "lead.post" if has_parent else "lead.process"
+
+    with logfire.span(
+        span_name,
+        lead_id=trace_id,
+        slack_channel_id=channel_id,
+        slack_thread_ts=thread_ts,
+        email=lead.email,
+        email_domain=email_domain,
+        company=lead.company,
+        max_searches=max_searches,
         include_lead_info=include_lead_info,
-    )
+        dry_run=settings.dry_run,
+    ):
+        processed = process_lead(settings, lead, max_searches=max_searches)
 
-    return processed
+        post_to_slack(
+            settings,
+            processed,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            include_lead_info=include_lead_info,
+        )
+
+        return processed

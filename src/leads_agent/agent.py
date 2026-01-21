@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from typing import Any, Callable, TypeVar, overload
 
 import logfire
+from opentelemetry import trace
 from pydantic_ai import Agent
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 from pydantic_ai.messages import ModelMessage
@@ -185,50 +187,78 @@ def classify_lead(
     Classify a HubSpot lead using a multi-stage pipeline:
     triage → (if promising) web research → (if promising) final 1–5 scoring.
     """
-    api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else "ollama"
+    # Ensure there is a stable parent span even when classify_lead is called directly
+    # (e.g., CLI/backtest). When invoked under an existing span (e.g., Slack processing),
+    # we create a child span instead.
+    current = trace.get_current_span()
+    has_parent = current.get_span_context().is_valid
 
-    triage_agent = _create_triage_agent(settings, api_key)
-    prompt = lead.to_prompt_text()
-    triage_run = triage_agent.run_sync(prompt)
-    triage = triage_run.output
-
-    final: LeadClassification | EnrichedLeadClassification = triage
-    message_history: list[ModelMessage] = []
-    usage: dict[str, Any] = {"triage": _usage_snapshot(triage_run)}
-    try:
-        message_history.extend(triage_run.all_messages())
-    except Exception:
-        pass
-
-    if triage.label.value == "promising":
-        enriched, research_msgs, research_usage = _research_lead(
-            settings, lead, triage, max_searches=max_searches, return_debug=True
+    lead_id = ""
+    if lead.email:
+        lead_id = lead.email.lower()
+    if not lead_id:
+        base = "|".join(
+            [
+                lead.company or "",
+                lead.first_name or "",
+                lead.last_name or "",
+                (lead.message or lead.raw_text or "")[:500],
+            ]
         )
-        if research_msgs:
-            message_history.extend(research_msgs)
-        if research_usage:
-            usage["research"] = research_usage
+        lead_id = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
 
-        scored, scoring_msgs, scoring_usage = _score_lead(
-            settings,
-            lead,
-            triage=triage,
-            enriched=enriched,
-            return_debug=True,
-        )
-        final = scored
-        if scoring_msgs:
-            message_history.extend(scoring_msgs)
-        if scoring_usage:
-            usage["scoring"] = scoring_usage
+    span_name = "lead.classify" if has_parent else "lead.process"
+    with logfire.span(
+        span_name,
+        lead_id=lead_id,
+        email=lead.email,
+        company=lead.company,
+        max_searches=max_searches,
+    ):
+        api_key = settings.openai_api_key.get_secret_value() if settings.openai_api_key else "ollama"
 
-    if debug:
-        return ClassificationResult(
-            classification=final,
-            message_history=message_history,
-            usage=usage,
-        )
-    return final
+        triage_agent = _create_triage_agent(settings, api_key)
+        prompt = lead.to_prompt_text()
+        triage_run = triage_agent.run_sync(prompt)
+        triage = triage_run.output
+
+        final: LeadClassification | EnrichedLeadClassification = triage
+        message_history: list[ModelMessage] = []
+        usage: dict[str, Any] = {"triage": _usage_snapshot(triage_run)}
+        try:
+            message_history.extend(triage_run.all_messages())
+        except Exception:
+            pass
+
+        if triage.label.value == "promising":
+            enriched, research_msgs, research_usage = _research_lead(
+                settings, lead, triage, max_searches=max_searches, return_debug=True
+            )
+            if research_msgs:
+                message_history.extend(research_msgs)
+            if research_usage:
+                usage["research"] = research_usage
+
+            scored, scoring_msgs, scoring_usage = _score_lead(
+                settings,
+                lead,
+                triage=triage,
+                enriched=enriched,
+                return_debug=True,
+            )
+            final = scored
+            if scoring_msgs:
+                message_history.extend(scoring_msgs)
+            if scoring_usage:
+                usage["scoring"] = scoring_usage
+
+        if debug:
+            return ClassificationResult(
+                classification=final,
+                message_history=message_history,
+                usage=usage,
+            )
+        return final
 
 
 def _research_lead(
