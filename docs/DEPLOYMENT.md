@@ -31,6 +31,9 @@ Notes:
 
 - By default `docker-compose.yml` binds the API to `127.0.0.1:8000` (private to the host).
 - The container auto-restarts (`restart: unless-stopped`).
+- Logfire credentials are baked into the Docker image by copying the repo’s `.logfire/` directory during build.
+  - Make sure `.logfire/` exists on the server (or is present in the git repo you clone).
+  - Security note: baking credentials into an image means anyone who can pull the image can extract them. Prefer `LOGFIRE_TOKEN` via `.env` for stricter secret handling.
 
 ## Expose HTTPS for Slack (pick one)
 
@@ -85,7 +88,7 @@ Once enabled, set Slack’s Request URL to:
 cd /opt/leads-agent
 git pull
 docker compose up -d --build
-docker compose logs -f leads-agent
+docker compose logs -f primary
 ```
 
 ## Rollback

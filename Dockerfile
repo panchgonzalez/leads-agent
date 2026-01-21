@@ -4,38 +4,22 @@
 # Production Dockerfile for Leads Agent
 # ============================================================
 
-# --- Build stage ---
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install uv for fast dependency management
-RUN pip install --no-cache-dir uv
+# Install uv and create non-root user
+RUN pip install --no-cache-dir uv \
+    && useradd --create-home --shell /bin/bash appuser
 
-# Copy dependency files first for better layer caching
-COPY pyproject.toml ./
-COPY README.md ./
-COPY LICENSE ./
-
-# Copy source code
+# Copy app + credentials (credentials are expected to exist at repo root: .logfire/)
+COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
+COPY .logfire/ ./.logfire/
 
 # Install dependencies and the package (NOT editable for production)
-RUN uv pip install --system --no-cache .
-
-
-# --- Runtime stage ---
-FROM python:3.11-slim AS runtime
-
-WORKDIR /app
-
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash appuser
-
-# Copy installed packages from builder (includes leads_agent in site-packages)
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin/leads-agent /usr/local/bin/leads-agent
-COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+RUN uv pip install --system --no-cache . \
+    && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
@@ -43,7 +27,8 @@ USER appuser
 # Environment defaults (override at runtime)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+    PORT=8000 \
+    LOGFIRE_CREDENTIALS_DIR=/app/.logfire
 
 # Expose the default port
 EXPOSE 8000

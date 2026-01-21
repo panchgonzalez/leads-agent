@@ -1,8 +1,7 @@
 services:
-  leads-agent:
+  primary:
     build:
       context: .
-    container_name: leads-agent
     restart: unless-stopped
     env_file:
       - .env
@@ -25,7 +24,7 @@ services:
   #     - caddy_data:/data
   #     - caddy_config:/config
   #   depends_on:
-  #     - leads-agent
+  #     - primary
 
   # volumes:
   #   caddy_data:
