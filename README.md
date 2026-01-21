@@ -13,23 +13,25 @@
 
 When HubSpot posts a lead to your Slack channel, Leads Agent:
 1. Parses contact info (name, email, company)
-2. Classifies the lead using an LLM
-3. **Optionally researches** promising leads via web search
-4. Posts a threaded reply with results
+2. Does a fast **go/no-go** triage (promising vs ignore)
+3. If **promising**, researches the company/contact and produces a **1–5 score** + recommended action
+4. Posts a threaded reply with the decision and context
 
-## Classification Labels
+## Tracing (Logfire)
 
-| Label | Description |
-|-------|-------------|
-| 🟢 **promising** | Genuine inquiry about services or collaboration |
-| 🟡 **solicitation** | Vendors, sales pitches, recruiters, partnerships |
-| 🔴 **spam** | Irrelevant, automated, SEO/link-building, junk |
+Lead processing is wrapped in a single Logfire span (`lead.process`) so the triage/research/scoring agent traces are grouped under one lead.
+In Slack-driven flows, the span uses the Slack `thread_ts` as the `lead_id` for easy correlation.
+
+## Classification & Scoring
+
+- **Triage decision**: `promising` or `ignore`
+- **If promising**: enrich via web search + score 1–5 with context and recommended action
 
 ## Features
 
 - **HubSpot-specific parsing** — Extracts first name, last name, email, company from HubSpot message format
-- **Smart classification** — Infers company from email domain when not provided
-- **Web search enrichment** — Researches promising leads (company info, contact role) via DuckDuckGo
+- **Smart triage** — Infers company from email domain when not provided
+- **Research + scoring** — For promising leads, researches context (company/contact) and outputs a 1–5 score
 - **Threaded replies** — Keeps channels clean by replying in threads
 - **Multiple run modes** — Backtest, test channel, replay to production
 
@@ -114,13 +116,14 @@ leads-agent config
 ## CLI Commands
 
 ```bash
-leads-agent init                    # Setup wizard
+leads-agent init                    # Setup wizard (includes prompt config)
 leads-agent config                  # Show configuration
+leads-agent prompts                 # Show prompt configuration
+leads-agent prompts --full          # Show rendered prompts
 leads-agent run [--reload]          # Start API server
 
 # Classification
-leads-agent classify "message"      # Classify a single message
-leads-agent classify "msg" --enrich # Research promising leads
+leads-agent classify "message"      # Triage; if promising, auto research + score
 
 # Testing & Validation
 leads-agent backtest --limit 20     # Console-only testing
@@ -145,7 +148,6 @@ All commands respect the `DRY_RUN` config setting. Override with `--dry-run` or 
 
 | Option | Description |
 |--------|-------------|
-| `--enrich`, `-e` | Research promising leads via web search |
 | `--limit`, `-n` | Number of leads to process |
 | `--max-searches` | Limit web searches per lead (default: 4) |
 | `--dry-run` / `--live` | Override DRY_RUN config |
@@ -155,14 +157,14 @@ All commands respect the `DRY_RUN` config setting. Override with `--dry-run` or 
 ### Examples
 
 ```bash
-# Backtest with enrichment and debug output
-leads-agent backtest --limit 10 --enrich --debug
+# Backtest with debug output
+leads-agent backtest --limit 10 --debug
 
 # Test on separate channel (safe)
-leads-agent test --limit 5 --enrich
+leads-agent test --limit 5
 
 # Replay to production (posts thread replies)
-leads-agent replay --limit 5 --enrich --live
+leads-agent replay --limit 5 --live
 ```
 
 ---
@@ -192,19 +194,87 @@ Any OpenAI-compatible API works — set `LLM_BASE_URL`, `LLM_MODEL_NAME`, and `O
 
 ---
 
+## Prompt Configuration
+
+Customize the classification behavior for your deployment without modifying code. Configure:
+- **Company context** — Your company name and services
+- **Ideal Client Profile (ICP)** — Target industries, company sizes, roles
+- **Qualifying questions** — Custom criteria for lead evaluation
+- **Research focus areas** — What to look for when enriching leads
+
+### Configuration File
+
+Create `prompt_config.json` in your project root (copy from [`prompt_config.example.json`](prompt_config.example.json)):
+
+```bash
+cp prompt_config.example.json prompt_config.json
+# Edit with your company's ICP, questions, etc.
+```
+
+Or use `leads-agent init` to create it interactively.
+
+The file is auto-discovered from the current directory. To use a different location:
+
+```bash
+export PROMPT_CONFIG_PATH=/path/to/my-config.json
+```
+
+### Example Configuration
+
+```json
+{
+  "company_name": "Acme Consulting",
+  "services_description": "AI/ML consulting and custom software development",
+  "icp": {
+    "description": "Mid-market B2B SaaS companies",
+    "target_industries": ["SaaS", "FinTech", "HealthTech"],
+    "target_company_sizes": ["SMB", "Mid-Market"],
+    "target_roles": ["CTO", "VP Engineering", "Head of Data"]
+  },
+  "qualifying_questions": [
+    "Does this look like a real business need?",
+    "Is there budget indication or enterprise context?"
+  ]
+}
+```
+
+### View Current Configuration
+
+```bash
+leads-agent prompts           # Show configuration summary
+leads-agent prompts --full    # Show full rendered prompts
+leads-agent prompts --json    # Output as JSON
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/config/prompts` | GET | Get current configuration and rendered prompts |
+| `/config/prompts` | PUT | Replace entire configuration (runtime only) |
+| `/config/prompts` | PATCH | Partially update configuration (runtime only) |
+| `/config/prompts` | DELETE | Reset to file-based defaults |
+| `/config/prompts/preview` | GET | Preview prompts with temporary config |
+
+> **Note:** API updates are runtime-only and don't persist to the config file. Edit `prompt_config.json` for permanent changes.
+
+---
+
 ## Project Structure
 
 ```
 leads-agent/
 ├── src/leads_agent/
-│   ├── api.py        # FastAPI webhook handler
+│   ├── api.py        # FastAPI webhook handler + config endpoints
 │   ├── cli.py        # Typer CLI (init, run, backtest, test, replay, etc.)
 │   ├── config.py     # Settings (pydantic-settings)
 │   ├── models.py     # HubSpotLead, LeadClassification, research models
+│   ├── prompts.py    # Prompt configuration and management
 │   ├── llm.py        # Classification + research agents
 │   ├── processor.py  # Shared processing pipeline
 │   ├── backtest.py   # Historical lead fetching
 │   └── slack.py      # Slack client & signature verification
+├── prompt_config.example.json  # Example prompt configuration
 ├── docs/ARCHITECTURE.md
 ├── slack-app-manifest.yml
 └── pyproject.toml

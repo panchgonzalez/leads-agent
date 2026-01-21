@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .config import Settings, get_settings
-from .llm import ClassificationResult, classify_lead
+from .agent import ClassificationResult, classify_lead
 from .models import EnrichedLeadClassification, HubSpotLead
 from .slack import slack_client
 
@@ -36,7 +36,6 @@ def fetch_hubspot_leads(settings: Settings, limit: int = 200) -> Iterable[tuple[
 def run_backtest(
     settings: Settings | None = None,
     limit: int = 50,
-    enrich: bool = False,
     max_searches: int = 4,
     debug: bool = False,
     verbose: bool = False,
@@ -46,8 +45,6 @@ def run_backtest(
         settings = get_settings()
 
     modes = []
-    if enrich:
-        modes.append("enrichment")
     if debug:
         modes.append("debug")
     mode_str = f" ({', '.join(modes)})" if modes else ""
@@ -64,7 +61,7 @@ def run_backtest(
             if lead.company:
                 print(f"    Company: {lead.company}")
 
-        result = classify_lead(settings, lead, enrich=enrich, max_searches=max_searches, debug=debug)
+        result = classify_lead(settings, lead, max_searches=max_searches, debug=debug)
 
         # Handle ClassificationResult wrapper when debug=True
         if isinstance(result, ClassificationResult):
@@ -95,7 +92,7 @@ def run_backtest(
             confidence = result.confidence
             reason = result.reason
 
-        label_emoji = {"spam": "🔴", "solicitation": "🟡", "promising": "🟢"}.get(label_value, "⚪")
+        label_emoji = {"ignore": "🚫", "promising": "✅"}.get(label_value, "❓")
 
         print()
         print(f"Name: {lead.first_name} {lead.last_name}")
@@ -109,6 +106,16 @@ def run_backtest(
         label_display = label_value.upper() if isinstance(label_value, str) else label_value
         print(f"{label_emoji} {label_display} ({confidence:.0%})")
         print(f"Reason: {reason}")
+        if hasattr(classification, "score"):
+            try:
+                print(f"Score: {classification.score}/5 ({classification.action.value})")
+                print(f"Score Reason: {classification.score_reason}")
+            except Exception:
+                pass
+        if getattr(classification, "lead_summary", None):
+            print(f"Summary: {classification.lead_summary}")
+        if getattr(classification, "key_signals", None):
+            print(f"Signals: {', '.join(classification.key_signals)}")
         if classification.company:
             print(f"Extracted Company: {classification.company}")
 

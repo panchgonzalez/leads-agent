@@ -7,10 +7,14 @@ Testing: Pull history → process → post to test channel
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .llm import classify_lead
+import logfire
+from opentelemetry import trace
+
+from .agent import classify_lead
 from .models import EnrichedLeadClassification, HubSpotLead, LeadClassification
 from .slack import slack_client
 
@@ -48,12 +52,6 @@ def format_slack_message(
         classification: The classification result
         include_lead_info: If True, include lead details (for test channel posts)
     """
-    label_emoji = {
-        "spam": "🔴",
-        "solicitation": "🟡",
-        "promising": "🟢",
-    }.get(classification.label.value, "⚪")
-
     parts = []
 
     # Optionally include lead info header (for test mode)
@@ -69,9 +67,24 @@ def format_slack_message(
             parts.append(f"*Message:* {msg_preview}")
         parts.append("")  # blank line
 
-    # Classification result
-    parts.append(f"{label_emoji} *{classification.label.value.upper()}* ({classification.confidence:.0%})")
+    # Go / No-go (hide taxonomy)
+    if classification.label.value == "promising":
+        parts.append(f"✅ *GO* ({classification.confidence:.0%})")
+    else:
+        parts.append(f"🚫 *IGNORE* ({classification.confidence:.0%})")
     parts.append(f"_{classification.reason}_")
+
+    # Optional final score (for promising leads after research+scoring)
+    if getattr(classification, "score", None) is not None and getattr(classification, "action", None) is not None:
+        parts.append(f"\n⭐ *Score:* {classification.score}/5 · *Action:* {classification.action.value}")
+        if getattr(classification, "score_reason", None):
+            parts.append(f"_{classification.score_reason}_")
+
+    # Optional lead summary/signals (useful when triage output includes them)
+    if classification.lead_summary:
+        parts.append(f"\n*🧾 Summary:* {classification.lead_summary}")
+    if classification.key_signals:
+        parts.append("\n*🏷️ Signals:* " + ", ".join(classification.key_signals))
 
     # Extracted company if different
     if classification.company and classification.company != lead.company:
@@ -115,7 +128,6 @@ def process_lead(
     settings: "Settings",
     lead: HubSpotLead,
     *,
-    enrich: bool = False,
     max_searches: int = 4,
 ) -> ProcessedLead:
     """
@@ -124,13 +136,12 @@ def process_lead(
     Args:
         settings: Application settings
         lead: Parsed HubSpot lead
-        enrich: Whether to research promising leads
         max_searches: Max web searches for enrichment
 
     Returns:
         ProcessedLead with classification and formatted Slack message
     """
-    classification = classify_lead(settings, lead, enrich=enrich, max_searches=max_searches)
+    classification = classify_lead(settings, lead, max_searches=max_searches)
 
     # Handle ClassificationResult wrapper (from debug mode)
     if hasattr(classification, "classification"):
@@ -192,7 +203,6 @@ def process_and_post(
     *,
     channel_id: str,
     thread_ts: str | None = None,
-    enrich: bool = False,
     max_searches: int = 4,
     include_lead_info: bool = False,
 ) -> ProcessedLead:
@@ -206,21 +216,57 @@ def process_and_post(
         lead: Parsed HubSpot lead
         channel_id: Where to post the result
         thread_ts: If provided, post as thread reply (production mode)
-        enrich: Whether to research promising leads
         max_searches: Max web searches for enrichment
         include_lead_info: Include lead details in message (test mode)
 
     Returns:
         ProcessedLead with results
     """
-    processed = process_lead(settings, lead, enrich=enrich, max_searches=max_searches)
+    # Group all agent traces (triage/research/scoring) and Slack posting under one lead span.
+    email_domain = ""
+    if lead.email and "@" in lead.email:
+        email_domain = lead.email.split("@", 1)[1].lower()
 
-    post_to_slack(
-        settings,
-        processed,
-        channel_id=channel_id,
-        thread_ts=thread_ts,
+    # Prefer Slack timestamp when available; otherwise fall back to a stable short hash.
+    trace_id = thread_ts or (lead.email.lower() if lead.email else "")
+    if not trace_id:
+        base = "|".join(
+            [
+                lead.company or "",
+                email_domain,
+                lead.first_name or "",
+                lead.last_name or "",
+                (lead.message or lead.raw_text or "")[:500],
+            ]
+        )
+        trace_id = hashlib.sha1(base.encode("utf-8")).hexdigest()[:12]
+
+    current = trace.get_current_span()
+    has_parent = current.get_span_context().is_valid
+
+    # Only create a top-level lead.process span if we aren't already inside one.
+    span_name = "lead.post" if has_parent else "lead.process"
+
+    with logfire.span(
+        span_name,
+        lead_id=trace_id,
+        slack_channel_id=channel_id,
+        slack_thread_ts=thread_ts,
+        email=lead.email,
+        email_domain=email_domain,
+        company=lead.company,
+        max_searches=max_searches,
         include_lead_info=include_lead_info,
-    )
+        dry_run=settings.dry_run,
+    ):
+        processed = process_lead(settings, lead, max_searches=max_searches)
 
-    return processed
+        post_to_slack(
+            settings,
+            processed,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            include_lead_info=include_lead_info,
+        )
+
+        return processed

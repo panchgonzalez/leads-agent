@@ -85,7 +85,7 @@ class LeadClassification(BaseModel):
     last_name: str | None
     email: str | None
     company: str | None      # Extracted from message or email domain
-    label: LeadLabel         # spam | solicitation | promising
+    label: LeadLabel         # ignore | promising
     confidence: float        # 0.0–1.0
     reason: str
 ```
@@ -149,7 +149,7 @@ Receives live webhooks from Slack. When HubSpot posts a lead, classifies it and 
 ### Backtest Mode
 
 ```bash
-leads-agent backtest --limit 20 --enrich --debug
+leads-agent backtest --limit 20 --debug
 ```
 
 Console-only testing. No Slack posts. Good for validating classifier behavior.
@@ -157,7 +157,7 @@ Console-only testing. No Slack posts. Good for validating classifier behavior.
 ### Test Mode
 
 ```bash
-leads-agent test --limit 5 --enrich
+leads-agent test --limit 5
 ```
 
 Posts results to `SLACK_TEST_CHANNEL_ID` (not as threads). Safe for testing Slack output format.
@@ -165,7 +165,7 @@ Posts results to `SLACK_TEST_CHANNEL_ID` (not as threads). Safe for testing Slac
 ### Replay Mode
 
 ```bash
-leads-agent replay --limit 5 --enrich --live
+leads-agent replay --limit 5 --live
 ```
 
 Posts results as **thread replies on original messages** in production. Use to backfill classifications on historical leads.
@@ -205,8 +205,7 @@ Features:
 | Label | Definition |
 |-------|------------|
 | 🟢 **promising** | Genuine service inquiry |
-| 🟡 **solicitation** | Vendors, sales, recruiters |
-| 🔴 **spam** | Junk, automated, irrelevant |
+| 🚫 **ignore** | Not worth pursuing (spam/scam, student projects, vendor pitches, etc.) |
 
 ### System Prompt
 
@@ -214,12 +213,11 @@ Features:
 You classify inbound leads from a consulting company contact form.
 
 Classification labels:
-- spam: irrelevant, automated, SEO/link-building, crypto, junk
-- solicitation: vendors, sales pitches, recruiters, partnership offers
-- promising: genuine inquiry about services or collaboration
+- ignore: not worth pursuing (spam/scam, student projects, resumes, vendor pitches, etc.)
+- promising: potentially real business intent worth investigating
 
 Rules:
-- Be conservative — if unclear, choose spam
+- Be conservative — if unclear, choose ignore
 - Extract the company name from the message or email domain if not provided
 ```
 
@@ -307,7 +305,7 @@ CMD ["leads-agent", "run", "--host", "0.0.0.0"]
 │                                            │              │             │
 │                                            ▼              │             │
 │                                    Web Search Research    │             │
-│                                    (if --enrich)          │             │
+│                                    (auto for promising)   │             │
 │                                            │              │             │
 │                                            ▼              ▼             │
 │                                     Post threaded reply                 │
