@@ -80,6 +80,13 @@ def init(
     rprint("\n[bold]Runtime Options[/]")
     dry_run = Confirm.ask("  [cyan]DRY_RUN[/] (don't post replies)?", default=True)
 
+    rprint("\n[bold]Observability (Logfire)[/]")
+    rprint("[dim]Get your token at https://logfire.pydantic.dev/[/]\n")
+    logfire_token = Prompt.ask(
+        "  [cyan]LOGFIRE_TOKEN[/] [dim](optional, for tracing)[/]",
+        default="",
+    )
+
     # Prompt Configuration
     rprint("\n[bold]Prompt Configuration[/] [dim](customize lead classification)[/]")
     configure_prompts = Confirm.ask("  Configure ICP and qualifying criteria?", default=False)
@@ -146,6 +153,25 @@ def init(
             f"DRY_RUN={str(dry_run).lower()}",
         ]
     )
+
+    # Logfire configuration
+    if logfire_token:
+        env_lines.extend(
+            [
+                "",
+                "# Observability (Logfire)",
+                f"LOGFIRE_TOKEN={logfire_token}",
+            ]
+        )
+    else:
+        env_lines.extend(
+            [
+                "",
+                "# Observability (Logfire)",
+                "# Get your token at https://logfire.pydantic.dev/",
+                "# LOGFIRE_TOKEN=",
+            ]
+        )
 
     # Determine prompt config file path (same directory as .env)
     prompt_config_path = output.parent / "prompt_config.json"

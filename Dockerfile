@@ -12,10 +12,9 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv \
     && useradd --create-home --shell /bin/bash appuser
 
-# Copy app + credentials (credentials are expected to exist at repo root: .logfire/)
+# Copy application code
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
-COPY .logfire/ ./.logfire/
 
 # Install dependencies and the package (NOT editable for production)
 RUN uv pip install --system --no-cache . \
@@ -25,10 +24,10 @@ RUN uv pip install --system --no-cache . \
 USER appuser
 
 # Environment defaults (override at runtime)
+# LOGFIRE_TOKEN should be set via .env file
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000 \
-    LOGFIRE_CREDENTIALS_DIR=/app/.logfire
+    PORT=8000
 
 # Expose the default port
 EXPOSE 8000

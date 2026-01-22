@@ -1,11 +1,9 @@
-# Replace with your real hostname (must resolve to the EC2 static IP)
+# Replace "your-domain.example" with your real hostname.
+# The domain must have a DNS A record pointing to your server's static IP.
 your-domain.example {
   encode gzip
 
-  # Slack will POST here
-  reverse_proxy /slack/events leads-agent:8000
-
-  # Health checks
-  reverse_proxy / leads-agent:8000
+  # Proxy all requests to the leads-agent API container
+  reverse_proxy primary:8000
 }
 

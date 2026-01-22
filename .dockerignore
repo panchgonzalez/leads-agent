@@ -49,3 +49,6 @@ channel_history.json
 Dockerfile
 docker-compose*.yml
 .docker
+
+# Logfire local credentials (use LOGFIRE_TOKEN instead)
+.logfire/

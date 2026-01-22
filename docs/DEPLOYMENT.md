@@ -1,88 +1,183 @@
-# Deployment (EC2 + Docker + optional Tailscale Funnel)
+# Deployment Guide
 
-This service is a small API that Slack calls at:
+Leads Agent is a small API that receives Slack webhooks at `POST /slack/events`. Slack requires a **public HTTPS URL**, which you can achieve via:
 
-- `POST /slack/events`
+- **Local development**: Tailscale Funnel (no static IP needed)
+- **Production (EC2)**: Static IP + domain + Caddy for automatic HTTPS
 
-## Prereqs
+Both approaches use Docker Compose.
 
-- An existing **EC2 instance** with a **static IP**
-- Docker installed (Docker Engine + Compose plugin)
-- A Slack App configured (see `README.md`)
-- Optional: Tailscale (only if using Funnel / Tailscale SSH)
+---
 
-## One-time setup (on the EC2 host)
+## Prerequisites
+
+| Requirement | Local | EC2 |
+|-------------|:-----:|:---:|
+| Docker + Compose | ✓ | ✓ |
+| Slack App configured ([see README](../README.md#slack-app-setup)) | ✓ | ✓ |
+| Tailscale installed | ✓ | - |
+| Static IP + domain | - | ✓ |
+| Ports 80/443 open | - | ✓ |
+
+---
+
+## Option A: Local Development (Tailscale Funnel)
+
+Use this when you want to run the bot from your local machine without exposing ports to the internet.
+
+### 1. Clone and configure
+
+```bash
+git clone <YOUR_REPO_URL> leads-agent
+cd leads-agent
+
+# Create .env with your secrets (see README for required vars)
+cp .env.example .env
+# Edit .env with your credentials
+chmod 600 .env
+```
+
+### 2. Start the service
+
+```bash
+docker compose up -d --build
+curl -f http://127.0.0.1:8000/  # Verify it's running
+```
+
+### 3. Expose via Tailscale Funnel
+
+Tailscale Funnel creates a public HTTPS URL that proxies to your local service.
+
+```bash
+# Check your Tailscale version for exact syntax
+tailscale version
+tailscale funnel --help
+
+# Typical command (may vary by version)
+tailscale funnel 8000
+```
+
+This gives you a public URL like `https://your-machine.tailnet-name.ts.net/`.
+
+### 4. Configure Slack
+
+Set your Slack App's **Event Subscriptions → Request URL** to:
+
+```
+https://your-machine.tailnet-name.ts.net/slack/events
+```
+
+### Notes
+
+- Funnel must stay running for Slack to reach your bot
+- Your machine must be online and connected to Tailscale
+- Good for development and testing; for always-on production, use EC2
+
+---
+
+## Option B: EC2 Production (Static IP + Caddy)
+
+Use this for always-on production deployment with automatic HTTPS via Let's Encrypt.
+
+### 1. DNS setup
+
+Create a DNS **A record** pointing your domain to the EC2 static IP:
+
+```
+leads.example.com → 1.2.3.4 (your EC2 Elastic IP)
+```
+
+### 2. Security group
+
+Ensure inbound rules allow:
+
+- **TCP 80** (HTTP, for Let's Encrypt challenge)
+- **TCP 443** (HTTPS, for Slack webhooks)
+
+### 3. Clone and configure on EC2
 
 ```bash
 sudo mkdir -p /opt/leads-agent
 sudo chown -R "$USER":"$USER" /opt/leads-agent
 cd /opt/leads-agent
 
-git clone <YOUR_REPO_GIT_URL> .
+git clone <YOUR_REPO_URL> .
 
-# Create /opt/leads-agent/.env with required secrets (see README for env vars)
+# Create .env with your secrets
+cp .env.example .env
+# Edit .env with your credentials
 chmod 600 .env
+```
 
+### 4. Configure Caddy
+
+Edit `deploy/Caddyfile` and replace `your-domain.example` with your actual domain:
+
+```bash
+# deploy/Caddyfile
+leads.example.com {
+  encode gzip
+  reverse_proxy primary:8000
+}
+```
+
+### 5. Enable Caddy in docker-compose.yml
+
+Uncomment the Caddy service and volumes:
+
+```yaml
+services:
+  primary:
+    # ... existing config ...
+
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - primary
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+### 6. Deploy
+
+```bash
 docker compose up -d --build
-curl -f http://127.0.0.1:8000/
+docker compose logs -f caddy  # Watch for successful cert acquisition
 ```
 
-Notes:
+Caddy automatically obtains and renews Let's Encrypt certificates.
 
-- By default `docker-compose.yml` binds the API to `127.0.0.1:8000` (private to the host).
-- The container auto-restarts (`restart: unless-stopped`).
-- Logfire credentials are baked into the Docker image by copying the repo’s `.logfire/` directory during build.
-  - Make sure `.logfire/` exists on the server (or is present in the git repo you clone).
-  - Security note: baking credentials into an image means anyone who can pull the image can extract them. Prefer `LOGFIRE_TOKEN` via `.env` for stricter secret handling.
+### 7. Configure Slack
 
-## Expose HTTPS for Slack (pick one)
+Set your Slack App's **Event Subscriptions → Request URL** to:
 
-Slack requires a **public HTTPS** URL. Set Slack’s Events Request URL to:
+```
+https://leads.example.com/slack/events
+```
 
-- `https://YOUR_HOSTNAME/slack/events`
+---
 
-### Option A (recommended): static IP + domain + HTTPS (Caddy)
+## Operations
 
-1. Create a DNS **A record**:
-   - `your-domain.example` → your EC2 static IP
-2. Allow inbound **80/443** to the instance (security group managed elsewhere)
-3. Enable Caddy:
-   - In `docker-compose.yml`, uncomment the `caddy` service
-   - In `deploy/Caddyfile`, replace `your-domain.example` with your real hostname
-4. Apply:
+### View logs
 
 ```bash
-cd /opt/leads-agent
-docker compose up -d --build
+docker compose logs -f primary  # Application logs
+docker compose logs -f caddy    # Caddy/HTTPS logs (if using)
 ```
 
-### Option B: Tailscale Funnel (if you can’t open inbound 80/443)
-
-1. Install Tailscale on the EC2 host and join the tailnet:
-
-```bash
-tailscale up ...
-```
-
-2. Use Tailscale **Serve** + **Funnel** to publish HTTPS → `http://127.0.0.1:8000`.
-
-Because the CLI differs by version, use the host’s help to get the exact commands:
-
-```bash
-tailscale version
-tailscale serve --help
-tailscale funnel --help
-```
-
-This repo previously used the pattern:
-
-- `tailscale funnel 8000`
-
-Once enabled, set Slack’s Request URL to:
-
-- `https://YOUR_TAILSCALE_PUBLIC_HOSTNAME/slack/events`
-
-## Deploy/update
+### Update/deploy new version
 
 ```bash
 cd /opt/leads-agent
@@ -91,7 +186,7 @@ docker compose up -d --build
 docker compose logs -f primary
 ```
 
-## Rollback
+### Rollback
 
 ```bash
 cd /opt/leads-agent
@@ -99,7 +194,41 @@ git checkout <previous_sha>
 docker compose up -d --build
 ```
 
-## Production note (enrichment)
+### Restart
 
-In webhook/API mode (`leads-agent run`), enrichment is **disabled by default**. If you want enrichment in production, change `src/leads_agent/api.py` and plan for extra latency/cost.
+```bash
+docker compose restart primary
+```
 
+---
+
+## Logfire (Observability)
+
+Logfire provides tracing and observability for lead processing.
+
+### Get your token
+
+1. Go to [logfire.pydantic.dev](https://logfire.pydantic.dev/)
+2. Create or select a project
+3. Go to **Project Settings → Write Tokens → Create Write Token**
+
+### Configure
+
+Add to your `.env` file:
+
+```bash
+LOGFIRE_TOKEN=your-write-token-here
+```
+
+The token is passed to the container via docker-compose's `env_file` directive.
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Caddy fails to get certificate | Verify DNS A record resolves; check ports 80/443 are open |
+| "Invalid request" from Slack | Check `SLACK_SIGNING_SECRET`; ensure server clock is synced (`timedatectl`) |
+| Container won't start | Check logs: `docker compose logs primary` |
+| Funnel not working | Verify Tailscale is connected: `tailscale status` |
