@@ -235,40 +235,6 @@ leads-agent prompts --full    # Show full rendered prompts
 leads-agent prompts --json    # Output as JSON
 ```
 
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/config/prompts` | GET | Get current configuration and rendered prompts |
-| `/config/prompts` | PUT | Replace entire configuration (runtime only) |
-| `/config/prompts` | PATCH | Partially update configuration (runtime only) |
-| `/config/prompts` | DELETE | Reset to file-based defaults |
-| `/config/prompts/preview` | GET | Preview prompts with temporary config |
-
-> **Note:** API updates are runtime-only and don't persist to the config file. Edit `prompt_config.json` for permanent changes.
-
----
-
-## Project Structure
-
-```
-leads-agent/
-├── src/leads_agent/
-│   ├── api.py        # FastAPI webhook handler + config endpoints
-│   ├── cli.py        # Typer CLI (init, run, collect, backtest, test, etc.)
-│   ├── config.py     # Settings (pydantic-settings)
-│   ├── models.py     # HubSpotLead, LeadClassification, research models
-│   ├── prompts.py    # Prompt configuration and management
-│   ├── llm.py        # Classification + research agents
-│   ├── processor.py  # Shared processing pipeline
-│   ├── backtest.py   # Historical lead fetching
-│   └── slack.py      # Slack client & signature verification
-├── prompt_config.example.json  # Example prompt configuration
-├── docs/ARCHITECTURE.md
-├── slack-app-manifest.yml
-└── pyproject.toml
-```
-
 ---
 
 ## Troubleshooting
@@ -291,7 +257,8 @@ In Slack-driven flows, the span uses the Slack `thread_ts` as the `lead_id` for 
 
 ## Documentation
 
-- **[Architecture Guide](docs/ARCHITECTURE.md)** — Data flow, Slack manifest, classification system, deployment
+- **[Architecture Guide](docs/ARCHITECTURE.md)** — Data flow, Slack manifest, classification system
+- **[Deployment Guide](docs/DEPLOYMENT.md)** - Deployment
 
 ## License
 

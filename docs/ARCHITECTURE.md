@@ -27,15 +27,20 @@ Leads Agent is a Slack bot that:
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| **Bolt App** | `bolt_app.py` | Socket Mode connection, receives Slack events, filters HubSpot messages |
-| **Processor** | `processor.py` | Shared pipeline: classify → format → post (used by all modes) |
+| **Bolt App** | `app.py` | Socket Mode connection, receives Slack events, filters HubSpot messages |
+| **Processor** | `core/processor.py` | Shared pipeline: classify → format → post (used by all modes) |
 | **Agent** | `agent.py` | Multi-stage LLM pipeline with pydantic-ai agents |
 | **Models** | `models.py` | `HubSpotLead`, `LeadClassification`, `EnrichedLeadClassification` |
-| **Prompts** | `prompts.py` | Prompt configuration, ICP settings, customizable instructions |
+| **Prompts** | `prompts/` | Prompt configuration, ICP settings, customizable instructions |
 | **Slack** | `slack.py` | Slack WebClient wrapper for posting messages |
 | **Config** | `config.py` | Environment/`.env` settings via pydantic-settings |
-| **CLI** | `cli.py` | Commands: `init`, `run`, `collect`, `backtest`, `test`, `classify` |
-| **Backtest** | `backtest.py` | Fetches historical HubSpot leads from Slack |
+| **CLI** | `cli.py` | Commands: `init`, `run`, `collect`, `backtest`, `test`, `classify`, `pull-history`, `replay` |
+| **Backtest** | `core/backtest.py` | Processes collected events and runs classifier offline |
+| **Classify** | `core/classify.py` | Single message classification (CLI command) |
+| **Replay** | `core/replay.py` | Replay HubSpot messages from channel history |
+| **History** | `core/history.py` | Fetch and save Slack channel history |
+| **Init Wizard** | `core/init_wizard.py` | Interactive setup wizard for configuration |
+| **Common** | `common/mask.py` | Utility for masking secrets in logs |
 
 ---
 
@@ -57,7 +62,7 @@ Message: We need help with AWS migration...
 The bot receives events via WebSocket (no public URL needed):
 
 ```python
-# bolt_app.py handles incoming events
+# app.py handles incoming events
 @app.event("message")
 def handle_message(event, say, client):
     if not _is_hubspot_message(settings, event):
@@ -253,7 +258,10 @@ Runs classifier on events from a JSON file (created by `collect`). Console-only,
 
 ## Prompt Configuration
 
-The `prompts.py` module provides customizable prompts without code changes.
+The `prompts/` module provides customizable prompts without code changes. The main components are:
+- `prompts/manager.py` - PromptManager class and configuration loading
+- `prompts/prompts.py` - Prompt templates and rendering
+- `prompts/utils.py` - Display utilities
 
 ### Configuration Sources
 
@@ -408,18 +416,22 @@ LOGFIRE_TOKEN=...          # Observability
 
 ```
 cli.py
-  ├── bolt_app.py ──────┐
-  ├── backtest.py ──────┼──▶ processor.py ──▶ agent.py ──▶ prompts.py
-  │                     │         │               │
-  │                     │         ▼               ▼
-  │                     │    slack.py        models.py
-  │                     │
-  └── config.py ◀───────┘
+  ├── app.py ────────────┐
+  ├── core/backtest.py ──┼──▶ core/processor.py ──▶ agent.py ──▶ prompts/manager.py
+  ├── core/classify.py ──┤         │                     │              │
+  ├── core/replay.py ────┤         │                     │              ▼
+  ├── core/history.py ───┤         ▼                     ▼         prompts/prompts.py
+  └── core/init_wizard.py│    slack.py            models.py
+                         │
+  config.py ◀─────────────┘
+  common/mask.py (used by config.py)
 ```
 
 **Key flows:**
-- `run` → `bolt_app.py` → `processor.py` → `agent.py`
-- `backtest` → `backtest.py` → `agent.py` (console only)
-- `test` → `bolt_app.py` (test mode) → `processor.py` → `agent.py`
-- `backtest` → `backtest.py` → `agent.py` (console only)
-- `classify` → `agent.py` (direct, single message)
+- `run` → `app.py` → `core/processor.py` → `agent.py`
+- `test` → `app.py` (test mode) → `core/processor.py` → `agent.py`
+- `backtest` → `core/backtest.py` → `agent.py` (console only)
+- `classify` → `core/classify.py` → `agent.py` (direct, single message)
+- `replay` → `core/replay.py` → `core/processor.py` → `agent.py`
+- `pull-history` → `core/history.py` → `slack.py`
+- `init` → `core/init_wizard.py` → `config.py`

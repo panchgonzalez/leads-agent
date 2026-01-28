@@ -186,11 +186,11 @@ LOGFIRE_TOKEN=your-write-token
 Check logs for successful connection:
 
 ```
-[STARTUP] Leads Agent (Socket Mode)
+[STARTUP] Leads Agent
   Channel filter: C0123456789
   Dry run: true
 
-Listening for HubSpot messages...
+Listening for HubSpot messages... (Ctrl+C to stop)
 ```
 
 If you see errors about tokens, double-check your `.env` values.
